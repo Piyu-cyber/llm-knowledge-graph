@@ -7,32 +7,34 @@ from groq import Groq
 # Load environment variables
 load_dotenv()
 
-# Initialize Groq client
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 
 class LLMService:
 
-    # 🔥 1. CONCEPT EXTRACTION
+    # 🔥 1. CONCEPT EXTRACTION (HARDENED)
     def extract_concepts(self, text):
         prompt = f"""
-Extract concepts and relationships from the following text.
+You are an information extraction system.
 
-Return ONLY valid JSON in this format:
+Extract key concepts and relationships from the text below.
+
+STRICT RULES:
+- Output ONLY valid JSON
+- No explanation, no markdown
+- Every concept MUST have name + description
+
+FORMAT:
 {{
   "concepts": [
-    {{"name": "", "description": "", "type": "Concept"}}
+    {{"name": "string", "description": "string", "type": "Concept"}}
   ],
   "relationships": [
-    {{"from": "", "to": "", "type": "PREREQUISITE"}}
+    {{"from": "string", "to": "string", "type": "RELATED"}}
   ]
 }}
 
-STRICT RULES:
-- Each concept MUST have a description
-- Output ONLY JSON
-
-Text:
+TEXT:
 {text[:2000]}
 """
 
@@ -43,51 +45,56 @@ Text:
                 temperature=0
             )
 
-            content = response.choices[0].message.content
+            content = response.choices[0].message.content.strip()
+            print("\n🔍 RAW LLM RESPONSE:\n", content)
 
+            # 🔥 Extract JSON safely
             match = re.search(r"\{.*\}", content, re.DOTALL)
 
             if not match:
-                print("❌ No JSON found in response")
+                print("❌ No JSON found")
                 return {"concepts": [], "relationships": []}
 
             json_str = match.group(0)
 
+            # 🔥 Try parsing
             try:
-                return json.loads(json_str)
+                data = json.loads(json_str)
+                print("✅ Parsed Concepts:", len(data.get("concepts", [])))
+                return data
 
             except json.JSONDecodeError:
-                print("⚠️ JSON broken, attempting cleanup...")
+                print("⚠️ Fixing JSON...")
 
+                # Cleanup
                 json_str = json_str.replace("\n", " ")
                 json_str = json_str.replace("\t", " ")
                 json_str = re.sub(r",\s*}", "}", json_str)
                 json_str = re.sub(r",\s*]", "]", json_str)
-                json_str = re.sub(r'(\w+):', r'"\1":', json_str)
 
                 try:
                     return json.loads(json_str)
                 except Exception as e:
-                    print("❌ Still invalid JSON:", e)
+                    print("❌ JSON still broken:", e)
                     return {"concepts": [], "relationships": []}
 
         except Exception as e:
-            print("❌ LLM ERROR:", e)
+            print("❌ LLM ERROR (extract):", e)
             return {"concepts": [], "relationships": []}
 
-    # 🔥 2. RELEVANCE CHECKER (CRAG CORE)
-    def evaluate_relevance(self, query, results):
+    # 🔥 2. RELEVANCE CHECKER (STRICT)
+    def evaluate_relevance(self, query, context):
         prompt = f"""
-        Query: {query}
+Query: {query}
 
-        Retrieved concepts:
-        {results}
+Context:
+{context}
 
-        Are these concepts relevant to the query?
+Are these relevant to answering the query?
 
-        Respond ONLY with:
-        GOOD or BAD
-        """
+Respond ONLY with:
+GOOD or BAD
+"""
 
         try:
             response = client.chat.completions.create(
@@ -96,50 +103,53 @@ Text:
                 temperature=0
             )
 
-            decision = response.choices[0].message.content.strip()
+            decision = response.choices[0].message.content.strip().upper()
 
-            if "GOOD" in decision.upper():
-                return "GOOD"
-            elif "BAD" in decision.upper():
-                return "BAD"
-            else:
-                return "BAD"
+            return "GOOD" if "GOOD" in decision else "BAD"
 
         except Exception as e:
             print("❌ LLM ERROR (relevance):", e)
             return "BAD"
 
-    # 🔥 3. ANSWER GENERATION (FINAL FIXED)
+    # 🔥 3. ANSWER GENERATION (FINAL VERSION)
     def generate_answer(self, query, context):
         prompt = f"""
-        You are an AI assistant.
+You are an AI assistant.
 
-        You MUST answer using the provided concepts.
+Answer the question using the provided context.
 
-        Question:
-        {query}
+STRUCTURE:
+- Start with a strong definition
+- Then explain key features in 2–3 sentences
 
-        Concepts:
-        {context}
+Question:
+{query}
 
-        STRICT RULES:
-        - You MUST use the concepts above
-        - Do NOT say "no context provided"
-        - Do NOT ignore the concepts
-        - Explain using the given concepts
-        - You MAY add general knowledge only if needed
+Context:
+{context}
 
-        Answer:
-        """
+RULES:
+- Max 3–4 sentences
+- Write confidently and clearly
+- No fluff
+- Prefer graph facts first
+
+Answer:
+"""
 
         try:
             response = client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3
+                temperature=0.2
             )
 
-            return response.choices[0].message.content.strip()
+            answer = response.choices[0].message.content.strip()
+
+            # 🔥 Optional cleanup (remove weird formatting)
+            answer = re.sub(r"\n{2,}", "\n", answer)
+
+            return answer
 
         except Exception as e:
             print("❌ LLM ERROR (answer):", e)
