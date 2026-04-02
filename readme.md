@@ -1,266 +1,292 @@
-# 🚀 OmniProf — CRAG-Based Intelligent Document Understanding System
+# 🚀 OmniProf — Hybrid CRAG (Corrective RAG) System
 
-## 🧠 Overview
+> **An Intelligent Knowledge Graph + RAG System for Document Understanding**
 
-OmniProf is an advanced AI-powered system designed to **ingest, understand, and reason over documents** using a hybrid architecture that combines:
+OmniProf is a **hybrid AI system** that combines:
 
-* 📄 **RAG (Retrieval-Augmented Generation)** for unstructured data
-* 🧩 **Knowledge Graph (Neo4j)** for structured relationships
-* 🔁 **CRAG (Corrective RAG)** for intelligent query handling
+* 📄 Document Ingestion
+* 🧠 LLM-based Knowledge Extraction
+* 🕸️ Graph-based Reasoning (Neo4j)
+* 🔍 Retrieval-Augmented Generation (FAISS)
+* 🔄 Corrective RAG (CRAG) Pipeline
 
-The system enables users to upload PDFs and ask questions, receiving **context-aware, reliable, and explainable answers** with confidence scores.
-
----
-
-## 🏗️ Architecture
-
-```
-PDF → Ingestion → LLM (Concept Extraction)
-                      ↓
-                Graph DB (Neo4j)
-                      ↓
-                  RAG (FAISS)
-
-User Query → CRAG Engine → Graph + RAG → LLM → Answer + Confidence
-```
+to deliver **accurate, explainable, and context-aware answers** from documents.
 
 ---
 
-## 🔥 Key Features
+# 🧠 Key Features
 
-### ✅ 1. Hybrid Retrieval (CRAG Engine)
+## 🔹 1. Hybrid CRAG Architecture
 
-* Combines:
-
-  * Graph-based retrieval (structured knowledge)
-  * Vector search (semantic retrieval via FAISS)
-* Performs **relevance evaluation + retry mechanism**
+* Combines **Graph Retrieval + Vector Retrieval**
+* Uses LLM to **evaluate relevance**
+* Retries with refined queries when needed
 
 ---
 
-### ✅ 2. Knowledge Graph Integration
+## 🔹 2. Knowledge Graph Construction
 
-* Extracts concepts & relationships using LLM
-* Stores in Neo4j
+* Extracts **concepts + relationships** from PDFs
+* Stores them in **Neo4j**
 * Supports:
 
-  * Concept search
-  * Relationship traversal
-  * Multi-hop expansion
+  * Direct relationships
+  * Multi-hop reasoning
+  * Automatic semantic linking
 
 ---
 
-### ✅ 3. RAG Pipeline (FAISS)
+## 🔹 3. Smart Auto-Linking 🔥
 
-* Chunk-based document processing
-* Embedding using `all-MiniLM-L6-v2`
-* Fast semantic retrieval
+* Automatically connects related concepts using:
 
----
-
-### ✅ 4. Query Intelligence Layer
-
-* 🔍 Query disambiguation
-* 🧠 Summary query detection (hybrid: heuristic + LLM)
-* ❓ Ambiguity detection with clarification options
+  * Abbreviation detection (e.g., *FOG → Fiber Optic Gyroscope*)
+  * Word overlap
+  * Semantic similarity
+* Enhances graph completeness beyond LLM output
 
 ---
 
-### ✅ 5. Anti-Hallucination Mechanism
+## 🔹 4. Vector Search (RAG)
 
-* Uses LLM-based relevance check:
+* Uses **Sentence Transformers + FAISS**
+* Efficient semantic retrieval
+* Context chunking + similarity search
 
+---
+
+## 🔹 5. Anti-Hallucination System
+
+* LLM evaluates:
+
+  * Context relevance
+  * Query alignment
+* Rejects irrelevant context
+* Prevents false answers
+
+---
+
+## 🔹 6. Query Disambiguation
+
+* Resolves ambiguous queries:
+
+  * "FOG" → "Fiber Optic Gyroscope"
+* Improves retrieval accuracy
+
+---
+
+## 🔹 7. Confidence Scoring
+
+* Each response includes:
+
+  * Confidence level
+  * Transparency in reasoning
+
+---
+
+# 🏗️ System Architecture
+
+```text
+                ┌──────────────┐
+                │   PDF Input  │
+                └──────┬───────┘
+                       ↓
+              ┌──────────────────┐
+              │ Ingestion Service│
+              └──────┬───────────┘
+                     ↓
+        ┌────────────────────────────┐
+        │ LLM Concept Extraction     │
+        └──────┬───────────┬────────┘
+               ↓           ↓
+        ┌──────────┐   ┌────────────┐
+        │ Neo4j    │   │ FAISS RAG  │
+        │ Graph DB │   │ Vector DB  │
+        └────┬─────┘   └────┬───────┘
+             ↓              ↓
+        ┌──────────────────────────┐
+        │   CRAG Retrieval Engine  │
+        └──────────┬───────────────┘
+                   ↓
+            ┌──────────────┐
+            │ Final Answer │
+            └──────────────┘
 ```
-GOOD → proceed  
-BAD → retry / stop  
-```
 
 ---
 
-### ✅ 6. Confidence Scoring
+# ⚙️ Tech Stack
 
-Each response includes a confidence score based on:
-
-* Graph retrieval presence
-* RAG retrieval quality
-* Relevance evaluation
-* Query ambiguity
-
----
-
-### ✅ 7. Graph Visualization (UI)
-
-* Interactive graph using relationships
-* Clickable nodes for exploration
-* Enhances interpretability
+| Component   | Technology           |
+| ----------- | -------------------- |
+| Backend     | FastAPI              |
+| LLM         | Groq (LLaMA 3.1)     |
+| Vector DB   | FAISS                |
+| Embeddings  | SentenceTransformers |
+| Graph DB    | Neo4j                |
+| PDF Parsing | PyPDF                |
+| Frontend    | HTML + JS            |
 
 ---
 
-## ⚙️ Tech Stack
+# 📂 Project Structure
 
-| Layer      | Technology           |
-| ---------- | -------------------- |
-| Backend    | FastAPI              |
-| LLM        | Groq (LLaMA 3.1)     |
-| Embeddings | SentenceTransformers |
-| Vector DB  | FAISS                |
-| Graph DB   | Neo4j                |
-| Frontend   | HTML + JS (vis.js)   |
-
----
-
-## 📂 Project Structure
-
-```
+```text
 backend/
 │
 ├── services/
+│   ├── ingestion_service.py
 │   ├── crag_service.py
 │   ├── rag_service.py
 │   ├── graph_service.py
-│   ├── ingestion_service.py
-│   ├── llm_service.py
+│   └── llm_service.py
 │
 ├── db/
 │   └── neo4j_driver.py
 │
-├── app.py
+└── main.py (FastAPI app)
+
+frontend/
+└── index.html
+
+.env
+requirements.txt
+README.md
 ```
 
 ---
 
-## 🚀 API Endpoints
+# 🔄 Pipeline Flow
 
-### 🔹 Health Check
+## 📥 Ingestion
 
-```
-GET /
-```
-
----
-
-### 🔹 Upload & Ingest PDF
-
-```
-POST /ingest
-```
-
----
-
-### 🔹 Query System
-
-```
-GET /query?q=your_query
-```
-
----
-
-### 🔹 Graph Data
-
-```
-GET /graph
-```
-
----
-
-### 🔹 Graph Visualization
-
-```
-GET /graph-view?query=concept
-```
-
----
-
-## 🧪 Example Queries
-
-* "What is B-Tree?"
-* "Explain this document"
-* "What is this proposal about?"
-* "Difference between CNN and Transformer"
-
----
-
-## 🧠 How It Works
-
-### 🔹 Ingestion Pipeline
-
-1. Extract text from PDF
-2. Use LLM to extract:
+1. Upload PDF
+2. Extract text
+3. LLM extracts:
 
    * Concepts
    * Relationships
-3. Store in:
+4. Store in:
 
-   * Graph DB (Neo4j)
-   * Vector DB (FAISS)
-
----
-
-### 🔹 Query Pipeline (CRAG)
-
-1. Detect query type (summary / ambiguous / normal)
-2. Retrieve:
-
-   * Graph concepts
-   * RAG chunks
-3. Evaluate relevance
-4. Retry if needed
-5. Generate final answer
-6. Compute confidence score
+   * Neo4j (graph)
+   * FAISS (vector DB)
+5. Auto-link concepts
 
 ---
 
-## ⚠️ Current Limitations
+## 🔍 Query Execution
 
-* ❌ FAISS index is in-memory (not persisted)
-* ❌ No authentication
-* ❌ No async optimization
-* ❌ Limited metadata in RAG (no document/page tracking)
+1. User query received
+2. Query disambiguation
+3. Retrieve from:
 
----
-
-## 🚀 Future Improvements
-
-* 💾 Persist FAISS index
-* ⚡ Async API calls
-* 📊 Better graph coverage
-* 🧠 Multi-hop reasoning enhancement
-* 🔐 Authentication layer
-* 📁 Multi-document support
+   * Graph (Neo4j)
+   * RAG (FAISS)
+4. Build combined context
+5. LLM evaluates relevance
+6. Retry if needed
+7. Generate final answer
 
 ---
 
-## 🎯 Project Highlights
+# 📊 Example Output
 
-* Hybrid AI system (Graph + RAG + LLM)
-* Real-time reasoning with fallback logic
-* Confidence-aware responses
-* Interactive knowledge visualization
-
----
-
-## 🧠 Research Inspiration
-
-This project is inspired by:
-
-* Retrieval-Augmented Generation (RAG)
-* Knowledge Graph Reasoning
-* Corrective RAG (CRAG)
+```json
+{
+  "query": "What is FOG?",
+  "answer": "Fiber Optic Gyroscope is a sensor used for measuring angular velocity...",
+  "confidence": 0.87,
+  "graph_results": [...],
+  "rag_results": [...]
+}
+```
 
 ---
 
-## 👨‍💻 Author
+# 🔥 Unique Highlights
 
-Piyush Prashant | Ankit Dash |Priyanshu Mittal
-
----
-
-## ⭐ Final Note
-
-This project demonstrates a **production-style AI system design**, combining multiple paradigms:
-
-> Graph reasoning + Vector search + LLM intelligence
+✔ Hybrid Graph + RAG reasoning
+✔ Automatic knowledge graph enrichment
+✔ Anti-hallucination mechanism
+✔ Query refinement loop (CRAG)
+✔ Explainable AI (graph + context shown)
 
 ---
 
-🔥 *Built to go beyond basic chatbots — towards intelligent knowledge systems.*
+# 🚀 How to Run
+
+## 1. Clone Repo
+
+```bash
+git clone https://github.com/yourusername/omnipro
+cd omnipro
+```
+
+---
+
+## 2. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## 3. Setup Environment
+
+```env
+GROQ_API_KEY=your_key
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_password
+```
+
+---
+
+## 4. Run Backend
+
+```bash
+uvicorn main:app --reload
+```
+
+---
+
+## 5. Open Frontend
+
+* Open `index.html`
+* Upload PDF
+* Ask questions
+
+---
+
+# 📈 Future Improvements
+
+* Multi-document memory support
+* Graph embeddings integration
+* Better UI graph visualization
+* Async processing
+* Authentication system
+
+---
+
+# 🎯 Use Cases
+
+* Research paper analysis
+* Technical documentation Q&A
+* Knowledge graph generation
+* AI-powered study assistant
+
+---
+
+# 👨‍💻 Author
+Piyush Prashant | Priyanshu Mittal | Ankit Dash
+
+
+---
+
+# ⭐ Final Note
+
+> OmniProf is not just a RAG system —
+> it is a **hybrid reasoning engine** combining symbolic (graph) and semantic (vector) intelligence.
+
+---
