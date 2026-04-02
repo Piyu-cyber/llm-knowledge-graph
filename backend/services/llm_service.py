@@ -12,19 +12,21 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 class LLMService:
 
-    # 🔥 Utility: Safe LLM call
-    def _call_llm(self, prompt, temperature=0):
-        try:
-            response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=temperature
-            )
-            return response.choices[0].message.content.strip()
+    # 🔥 Utility: Safe LLM call (IMPROVED)
+    def _call_llm(self, prompt, temperature=0, retries=2):
+        for attempt in range(retries):
+            try:
+                response = client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature
+                )
+                return response.choices[0].message.content.strip()
 
-        except Exception as e:
-            print("❌ LLM CALL ERROR:", e)
-            return None
+            except Exception as e:
+                print(f"❌ LLM CALL ERROR (attempt {attempt+1}):", e)
+
+        return None
 
     # 🔥 Utility: Extract JSON safely
     def _extract_json(self, text):
@@ -47,18 +49,12 @@ class LLMService:
         except Exception:
             return None
 
-    # 🔥 0. QUERY DISAMBIGUATION (NEW 🔥)
+    # 🔥 0. QUERY DISAMBIGUATION (FIXED)
     def disambiguate_query(self, query):
         prompt = f"""
-The query may have multiple meanings.
+Clarify the meaning of this query in 2–4 words.
 
 Query: {query}
-
-Identify the most likely meaning in 2–4 words.
-
-Examples:
-- "fog" → "weather fog" or "fiber optic gyroscope"
-- "tree" → "data structure tree"
 
 Respond ONLY with the clarified query.
 """
@@ -68,9 +64,17 @@ Respond ONLY with the clarified query.
         if not content:
             return query
 
-        return content.strip()
+        # 🔥 Clean output (important)
+        cleaned = content.strip()
+        cleaned = re.sub(r"[^a-zA-Z0-9\s]", "", cleaned)
 
-    # 🔥 1. CONCEPT EXTRACTION
+        # fallback if garbage
+        if len(cleaned.split()) > 6 or len(cleaned) < 2:
+            return query
+
+        return cleaned
+
+    # 🔥 1. CONCEPT EXTRACTION (FIXED — NO TRUNCATION BUG)
     def extract_concepts(self, text):
         prompt = f"""
 You are an information extraction system.
@@ -93,7 +97,7 @@ FORMAT:
 }}
 
 TEXT:
-{text[:2000]}
+{text}
 """
 
         content = self._call_llm(prompt, temperature=0)
@@ -112,7 +116,7 @@ TEXT:
         print("✅ Parsed Concepts:", len(data.get("concepts", [])))
         return data
 
-    # 🔥 2. RELEVANCE CHECKER (STRONGER)
+    # 🔥 2. RELEVANCE CHECKER (STABLE)
     def evaluate_relevance(self, query, context):
         prompt = f"""
 Query: {query}
@@ -121,9 +125,6 @@ Context:
 {context[:1500]}
 
 Is the context directly relevant to the SAME meaning of the query?
-
-If meanings differ or context is unrelated → BAD
-If clearly useful → GOOD
 
 Respond ONLY with:
 GOOD or BAD
@@ -138,7 +139,7 @@ GOOD or BAD
 
         return "GOOD" if "GOOD" in decision else "BAD"
 
-    # 🔥 3. ANSWER GENERATION (ANTI-HALLUCINATION 🔥)
+    # 🔥 3. ANSWER GENERATION (ANTI-HALLUCINATION)
     def generate_answer(self, query, context):
         prompt = f"""
 You are an expert AI assistant.

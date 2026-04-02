@@ -13,3 +13,8 @@ __pycache__/
 
 # Logs
 *.log
+
+.env
+__pycache__/
+*.pyc
+temp_*.pdf

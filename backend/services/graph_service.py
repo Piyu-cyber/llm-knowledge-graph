@@ -5,9 +5,15 @@ class GraphService:
     def __init__(self):
         self.db = Neo4jDriver()
 
+    # 🔥 Utility: normalize names
+    def _clean(self, name):
+        if not name:
+            return ""
+        return name.strip().lower().replace("-", "").replace("_", " ")
+
     # 🔥 Create / update concept
     def create_concept(self, name, description=""):
-        name = (name or "").strip()
+        name = self._clean(name)
         description = (description or "").strip()
 
         if not name:
@@ -26,17 +32,19 @@ class GraphService:
 
     # 🔥 Create relationship
     def create_relationship(self, from_node, to_node, rel_type="RELATED"):
-        from_node = (from_node or "").strip()
-        to_node = (to_node or "").strip()
+        from_node = self._clean(from_node)
+        to_node = self._clean(to_node)
 
         if not from_node or not to_node:
             return None
 
         rel_type = rel_type.upper().replace(" ", "_").replace("/", "_")
 
+        print(f"🔗 Creating relationship: {from_node} -> {to_node}")
+
         query = f"""
-        MATCH (a:Concept {{name: $from}})
-        MATCH (b:Concept {{name: $to}})
+        MERGE (a:Concept {{name: $from}})
+        MERGE (b:Concept {{name: $to}})
         MERGE (a)-[:{rel_type}]->(b)
         """
 
@@ -44,6 +52,46 @@ class GraphService:
             "from": from_node,
             "to": to_node
         })
+
+    # 🔥 NEW: AUTO LINK FUNCTION (FIXED)
+    def auto_link_similar(self, concepts):
+        try:
+            names = [
+                self._clean(c.get("name"))
+                for c in concepts
+                if c.get("name")
+            ]
+
+            for i in range(len(names)):
+                for j in range(i + 1, len(names)):
+                    a = names[i]
+                    b = names[j]
+
+                    if not a or not b:
+                        continue
+
+                    # 🔥 Rule 1: abbreviation match (FOG case)
+                    if "(" in a and ")" in a:
+                        abbr = a.split("(")[-1].replace(")", "").strip()
+                        if abbr and abbr in b:
+                            self.create_relationship(a, b, "ABBREVIATION")
+
+                    if "(" in b and ")" in b:
+                        abbr = b.split("(")[-1].replace(")", "").strip()
+                        if abbr and abbr in a:
+                            self.create_relationship(b, a, "ABBREVIATION")
+
+                    # 🔥 Rule 2: word overlap
+                    common = set(a.split()) & set(b.split())
+                    if len(common) >= 2:
+                        self.create_relationship(a, b, "RELATED")
+
+                    # 🔥 Rule 3: substring match
+                    if a != b and len(set(a.split()) & set(b.split())) >= 2:
+                        self.create_relationship(a, b, "RELATED")
+
+        except Exception as e:
+            print(f"⚠️ Auto-link internal error: {str(e)}")
 
     # 🔥 Get all concepts
     def get_graph(self):
@@ -53,8 +101,10 @@ class GraphService:
         """
         return self.db.run_query(query)
 
-    # 🔥 NEW: Get related concepts (1-hop)
+    # 🔥 Get related concepts
     def get_related_concepts(self, name):
+        name = self._clean(name)
+
         query = """
         MATCH (a:Concept {name: $name})-[r]->(b:Concept)
         RETURN type(r) AS relation, b.name AS name, b.description AS description
@@ -62,8 +112,10 @@ class GraphService:
         """
         return self.db.run_query(query, {"name": name})
 
-    # 🔥 NEW: Multi-hop expansion (2-hop reasoning)
+    # 🔥 Multi-hop expansion
     def expand_graph(self, name):
+        name = self._clean(name)
+
         query = """
         MATCH (a:Concept {name: $name})-[r1]->(b:Concept)-[r2]->(c:Concept)
         RETURN 
@@ -81,6 +133,7 @@ class GraphService:
         concepts = data.get("concepts", [])
         relationships = data.get("relationships", [])
 
+        # Insert concepts
         for concept in concepts:
             name = (concept.get("name") or "").strip()
             description = (concept.get("description") or "").strip()
@@ -96,19 +149,29 @@ class GraphService:
 
             self.create_concept(name, description)
 
+        # Insert relationships
         for rel in relationships:
             from_node = (rel.get("from") or "").strip()
             to_node = (rel.get("to") or "").strip()
             rel_type = (rel.get("type") or "RELATED").strip()
+
+            if from_node.lower().startswith("name:"):
+                from_node = from_node.split(":", 1)[1].strip()
+
+            if to_node.lower().startswith("name:"):
+                to_node = to_node.split(":", 1)[1].strip()
 
             if not from_node or not to_node:
                 continue
 
             self.create_relationship(from_node, to_node, rel_type)
 
+        # 🔥 AUTO LINK ADDED HERE
+        self.auto_link_similar(concepts)
+
         return {"status": "success"}
 
-    # 🔥 FINAL SEARCH (BEST VERSION)
+    # 🔥 Search
     def search_concepts(self, keyword):
         if not keyword:
             return []
@@ -122,7 +185,6 @@ class GraphService:
         if not words:
             return []
 
-        # 🔹 Neo4j filtered search
         query = """
         MATCH (c:Concept)
         WHERE ANY(word IN $words WHERE toLower(c.name) CONTAINS word)
@@ -135,20 +197,14 @@ class GraphService:
         if not results:
             return []
 
-        # 🔹 Scoring
         scored = []
         for r in results:
             name = (r.get("name") or "").lower()
 
             score = sum(1 for w in words if w in name)
 
-            # Boost exact match
             if keyword.lower() in name:
                 score += 2
-
-            # Boost startswith match
-            if any(name.startswith(w) for w in words):
-                score += 1
 
             if score > 0:
                 scored.append((score, r))
@@ -157,10 +213,8 @@ class GraphService:
             return []
 
         scored.sort(reverse=True, key=lambda x: x[0])
-
         best = scored[0][1]
 
-        # 🔥 Add relationships automatically
         related = self.get_related_concepts(best["name"]) or []
         expanded = self.expand_graph(best["name"]) or []
 

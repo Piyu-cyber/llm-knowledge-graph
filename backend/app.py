@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import os
-import uuid
+import tempfile
 
 from backend.services.graph_service import GraphService
 from backend.services.llm_service import LLMService
@@ -50,7 +50,11 @@ def home():
 @app.post("/concept")
 def add_concept(name: str, description: str = ""):
     try:
+        if not name.strip():
+            raise HTTPException(status_code=400, detail="Concept name cannot be empty")
+
         return graph_service.create_concept(name, description)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -64,10 +68,13 @@ def get_graph():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# 🔥 NEW: Graph visualization endpoint (VERY IMPORTANT)
+# 🔥 Graph visualization endpoint
 @app.get("/graph-view")
 def graph_view(query: str):
     try:
+        if not query.strip():
+            return {"nodes": [], "edges": []}
+
         results = graph_service.search_concepts(query)
 
         if not results:
@@ -106,22 +113,24 @@ def graph_view(query: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# 🔥 File upload + ingestion (FIXED)
+# 🔥 File upload + ingestion (FIXED CLEAN VERSION)
 @app.post("/ingest")
 def ingest(file: UploadFile = File(...)):
     try:
-        # 🔹 Unique temp file (important fix)
-        temp_filename = f"temp_{uuid.uuid4().hex}_{file.filename}"
+        if not file.filename.endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-        with open(temp_filename, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # 🔹 Create temp file safely
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            temp_path = tmp.name
 
-        # 🔹 Process
-        result = ingestion_service.ingest(temp_filename)
+        # 🔹 Process file
+        result = ingestion_service.ingest(temp_path)
 
         # 🔹 Cleanup
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
         return result
 
@@ -133,6 +142,13 @@ def ingest(file: UploadFile = File(...)):
 @app.get("/query")
 def query_system(q: str):
     try:
+        if not q or not q.strip():
+            raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+        if len(q) > 500:
+            raise HTTPException(status_code=400, detail="Query too long")
+
         return crag_service.retrieve(q)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
