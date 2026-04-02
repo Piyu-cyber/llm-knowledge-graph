@@ -7,7 +7,7 @@ class GraphService:
 
     # 🔥 Create / update concept
     def create_concept(self, name, description=""):
-        name = name.strip()
+        name = (name or "").strip()
         description = (description or "").strip()
 
         if not name:
@@ -18,6 +18,7 @@ class GraphService:
         SET c.description = $description
         RETURN c.name AS name, c.description AS description
         """
+
         return self.db.run_query(query, {
             "name": name,
             "description": description
@@ -25,8 +26,8 @@ class GraphService:
 
     # 🔥 Create relationship
     def create_relationship(self, from_node, to_node, rel_type="RELATED"):
-        from_node = from_node.strip()
-        to_node = to_node.strip()
+        from_node = (from_node or "").strip()
+        to_node = (to_node or "").strip()
 
         if not from_node or not to_node:
             return None
@@ -52,20 +53,38 @@ class GraphService:
         """
         return self.db.run_query(query)
 
-    # 🔥 Bulk insert (clean + safe)
+    # 🔥 NEW: Get related concepts (1-hop)
+    def get_related_concepts(self, name):
+        query = """
+        MATCH (a:Concept {name: $name})-[r]->(b:Concept)
+        RETURN type(r) AS relation, b.name AS name, b.description AS description
+        LIMIT 5
+        """
+        return self.db.run_query(query, {"name": name})
+
+    # 🔥 NEW: Multi-hop expansion (2-hop reasoning)
+    def expand_graph(self, name):
+        query = """
+        MATCH (a:Concept {name: $name})-[r1]->(b:Concept)-[r2]->(c:Concept)
+        RETURN 
+            b.name AS intermediate,
+            type(r1) AS rel1,
+            c.name AS name,
+            type(r2) AS rel2,
+            c.description AS description
+        LIMIT 5
+        """
+        return self.db.run_query(query, {"name": name})
+
+    # 🔥 Bulk insert
     def insert_from_llm(self, data):
         concepts = data.get("concepts", [])
         relationships = data.get("relationships", [])
 
-        concepts_added = 0
-        relationships_added = 0
-
-        # Insert concepts
         for concept in concepts:
-            name = concept.get("name", "").strip()
-            description = concept.get("description", "").strip()
+            name = (concept.get("name") or "").strip()
+            description = (concept.get("description") or "").strip()
 
-            # Clean LLM noise
             if name.lower().startswith("name:"):
                 name = name.split(":", 1)[1].strip()
 
@@ -76,69 +95,78 @@ class GraphService:
                 continue
 
             self.create_concept(name, description)
-            concepts_added += 1
 
-        # Insert relationships
         for rel in relationships:
-            from_node = rel.get("from", "").strip()
-            to_node = rel.get("to", "").strip()
-            rel_type = rel.get("type", "RELATED")
-
-            # Clean names
-            if from_node.lower().startswith("name:"):
-                from_node = from_node.split(":", 1)[1].strip()
-
-            if to_node.lower().startswith("name:"):
-                to_node = to_node.split(":", 1)[1].strip()
+            from_node = (rel.get("from") or "").strip()
+            to_node = (rel.get("to") or "").strip()
+            rel_type = (rel.get("type") or "RELATED").strip()
 
             if not from_node or not to_node:
                 continue
 
             self.create_relationship(from_node, to_node, rel_type)
-            relationships_added += 1
 
-        return {
-            "status": "success",
-            "concepts_added": concepts_added,
-            "relationships_added": relationships_added
-        }
+        return {"status": "success"}
 
-    # 🔥 FINAL SEARCH (STRICT + BEST MATCH ONLY)
+    # 🔥 FINAL SEARCH (BEST VERSION)
     def search_concepts(self, keyword):
-        # 🔹 Step 1: Clean query
-        words = keyword.lower().replace("?", "").split()
+        if not keyword:
+            return []
 
-        # 🔹 Step 2: Fetch all concepts
+        stopwords = {"what", "is", "the", "a", "an", "of", "in", "on", "for", "and", "to"}
+        words = [
+            w.lower() for w in keyword.replace("?", "").split()
+            if w.lower() not in stopwords and len(w) > 2
+        ]
+
+        if not words:
+            return []
+
+        # 🔹 Neo4j filtered search
         query = """
         MATCH (c:Concept)
+        WHERE ANY(word IN $words WHERE toLower(c.name) CONTAINS word)
         RETURN c.name AS name, c.description AS description
+        LIMIT 10
         """
-        results = self.db.run_query(query)
+
+        results = self.db.run_query(query, {"words": words})
 
         if not results:
             return []
 
-        # 🔹 Step 3: Score matches
+        # 🔹 Scoring
         scored = []
-
         for r in results:
             name = (r.get("name") or "").lower()
 
-            # Count matching words
             score = sum(1 for w in words if w in name)
 
-            # Ignore weak matches (VERY IMPORTANT)
+            # Boost exact match
+            if keyword.lower() in name:
+                score += 2
+
+            # Boost startswith match
+            if any(name.startswith(w) for w in words):
+                score += 1
+
             if score > 0:
                 scored.append((score, r))
 
         if not scored:
             return []
 
-        # 🔥 Sort by best match
         scored.sort(reverse=True, key=lambda x: x[0])
 
-        # 🔥 RETURN ONLY BEST MATCH (critical improvement)
-        best_score = scored[0][0]
-        best_results = [r for score, r in scored if score == best_score]
+        best = scored[0][1]
 
-        return best_results[:1]
+        # 🔥 Add relationships automatically
+        related = self.get_related_concepts(best["name"]) or []
+        expanded = self.expand_graph(best["name"]) or []
+
+        return [{
+            "name": best["name"],
+            "description": best.get("description", ""),
+            "related": related,
+            "expanded": expanded
+        }]

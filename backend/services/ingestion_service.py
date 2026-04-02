@@ -7,76 +7,110 @@ class IngestionService:
         self.rag_service = rag_service
         self.graph_service = graph_service
 
+    # 🔹 Step 1: Extract text safely
     def extract_text(self, file_path):
-        reader = PdfReader(file_path)
-        text = ""
+        try:
+            reader = PdfReader(file_path)
+            text_chunks = []
 
-        for page in reader.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
+            for i, page in enumerate(reader.pages):
+                try:
+                    extracted = page.extract_text()
+                    if extracted:
+                        text_chunks.append(extracted)
+                except Exception as e:
+                    print(f"⚠️ Skipping page {i}: {str(e)}")
 
-        return text
+            full_text = "\n".join(text_chunks)
+            return full_text.strip()
 
+        except Exception as e:
+            raise Exception(f"PDF extraction failed: {str(e)}")
+
+    # 🔹 Utility: Clean LLM text
+    def _clean_text(self, value):
+        if not value:
+            return ""
+
+        value = value.strip()
+
+        # Remove "name:" prefix if exists
+        if value.lower().startswith("name:"):
+            value = value.split(":", 1)[1].strip()
+
+        return value
+
+    # 🔹 Main ingestion pipeline
     def ingest(self, file_path):
         try:
-            # 🔹 Step 1: Extract text
+            # ✅ Step 1: Extract text
             text = self.extract_text(file_path)
 
-            if not text.strip():
+            if not text:
                 raise ValueError("No text extracted from document.")
 
-            # 🔹 Step 2: Extract concepts using LLM
-            data = self.llm_service.extract_concepts(text)
+            # ⚠️ Optional: limit text for LLM (avoid token overflow)
+            MAX_CHARS = 15000
+            llm_input = text[:MAX_CHARS]
+
+            # ✅ Step 2: Extract concepts using LLM
+            data = self.llm_service.extract_concepts(llm_input)
+
+            if not isinstance(data, dict):
+                raise ValueError("Invalid LLM response format.")
 
             concepts_added = 0
             relationships_added = 0
 
-            # 🔥 Step 3: Clean + store concepts
-            for concept in data.get("concepts", []):
-                name = concept.get("name", "").strip()
-                description = concept.get("description", "").strip()
+            # ✅ Step 3: Store concepts
+            seen_concepts = set()
 
-                # 🔥 CLEAN BAD LLM OUTPUT
-                if name.lower().startswith("name:"):
-                    name = name.split(":", 1)[1].strip()
+            for concept in data.get("concepts", []):
+                name = self._clean_text(concept.get("name"))
+                description = self._clean_text(concept.get("description"))
 
                 # ❌ Skip garbage
                 if not name or len(name) < 2:
                     continue
 
-                # Optional: skip very generic junk
                 if name.lower() in ["concept", "thing", "item"]:
                     continue
 
-                self.graph_service.create_concept(name, description)
-                concepts_added += 1
+                # Avoid duplicates
+                if name.lower() in seen_concepts:
+                    continue
 
-            # 🔥 Step 4: Clean + store relationships
+                try:
+                    self.graph_service.create_concept(name, description)
+                    seen_concepts.add(name.lower())
+                    concepts_added += 1
+                except Exception as e:
+                    print(f"⚠️ Concept insert failed ({name}): {str(e)}")
+
+            # ✅ Step 4: Store relationships
             for rel in data.get("relationships", []):
-                from_node = rel.get("from", "").strip()
-                to_node = rel.get("to", "").strip()
-                rel_type = rel.get("type", "RELATED")
-
-                # Clean names
-                if from_node.lower().startswith("name:"):
-                    from_node = from_node.split(":", 1)[1].strip()
-
-                if to_node.lower().startswith("name:"):
-                    to_node = to_node.split(":", 1)[1].strip()
+                from_node = self._clean_text(rel.get("from"))
+                to_node = self._clean_text(rel.get("to"))
+                rel_type = rel.get("type", "RELATED").strip()
 
                 if not from_node or not to_node:
                     continue
 
-                self.graph_service.create_relationship(
-                    from_node,
-                    to_node,
-                    rel_type
-                )
-                relationships_added += 1
+                try:
+                    self.graph_service.create_relationship(
+                        from_node,
+                        to_node,
+                        rel_type
+                    )
+                    relationships_added += 1
+                except Exception as e:
+                    print(f"⚠️ Relationship insert failed ({from_node}->{to_node}): {str(e)}")
 
-            # 🔹 Step 5: Store in RAG
-            self.rag_service.ingest_documents(text)
+            # ✅ Step 5: Store in RAG (FULL TEXT, not truncated)
+            try:
+                self.rag_service.ingest_documents(text)
+            except Exception as e:
+                print(f"⚠️ RAG ingestion failed: {str(e)}")
 
             return {
                 "status": "success",
