@@ -1,9 +1,14 @@
 fastapi
 uvicorn
 pypdf
+python-docx
+python-pptx
 sentence-transformers
 faiss-cpu
 numpy
 neo4j
 groq
 python-dotenv
+PyJWT
+bcrypt
+pydantic

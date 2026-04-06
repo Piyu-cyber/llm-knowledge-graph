@@ -1,6 +1,7 @@
 import os
 import json
 import re
+from typing import Dict
 from dotenv import load_dotenv
 from groq import Groq
 
@@ -115,8 +116,80 @@ TEXT:
 
         print("✅ Parsed Concepts:", len(data.get("concepts", [])))
         return data
+    
+    # 🔥 1b. HIERARCHICAL CONCEPT EXTRACTION (NEW - PHASE 4)
+    def extract_concepts_hierarchical(self, text: str) -> Dict:
+        """
+        Extract concepts with hierarchical levels and relationships.
+        
+        Returns structure with:
+        - Module/Topic/Concept/Fact hierarchy
+        - Prerequisites, extends, contrasts relationships
+        
+        Returns:
+            {"nodes": [...], "edges": [...]}
+        """
+        prompt = f"""
+You are an expert knowledge extraction system.
 
-    # 🔥 2. RELEVANCE CHECKER (STABLE)
+From the provided text, extract a hierarchical educational structure:
+- MODULES: Major subject areas
+- TOPICS: Subtopics within modules
+- CONCEPTS: Key ideas within topics
+- FACTS: Specific details/examples
+- RELATIONSHIPS: Prerequisites (REQUIRES), extensions (EXTENDS), conflicts (CONTRASTS)
+
+STRICT RULES:
+- Output ONLY valid JSON
+- No explanation or markdown
+- Each node must have: name, level (MODULE/TOPIC/CONCEPT/FACT), description
+- Each edge must have: source, target, type (REQUIRES/EXTENDS/CONTRASTS/RELATED)
+- Prerequisites = what must be learned first
+- Extends = how one concept builds on another
+- Contrasts = conflicting or opposite concepts
+
+FORMAT:
+{{
+  "nodes": [
+    {{"name": "string", "level": "MODULE|TOPIC|CONCEPT|FACT", "description": "string"}}
+  ],
+  "edges": [
+    {{"source": "string", "target": "string", "type": "REQUIRES|EXTENDS|CONTRASTS|RELATED"}}
+  ]
+}}
+
+TEXT:
+{text}
+"""
+        
+        content = self._call_llm(prompt, temperature=0)
+        
+        if not content:
+            return {"nodes": [], "edges": []}
+        
+        print("\n🔍 RAW HIERARCHICAL RESPONSE:\n", content[:500])
+        
+        data = self._extract_json(content)
+        
+        if not data:
+            print("❌ JSON parsing failed for hierarchical extraction")
+            return {"nodes": [], "edges": []}
+        
+        # Validate structure
+        nodes = data.get("nodes", [])
+        edges = data.get("edges", [])
+        
+        # Filter invalid nodes
+        valid_levels = {"MODULE", "TOPIC", "CONCEPT", "FACT"}
+        nodes = [n for n in nodes if n.get("level", "").upper() in valid_levels]
+        
+        # Filter invalid edges
+        valid_types = {"REQUIRES", "EXTENDS", "CONTRASTS", "RELATED"}
+        edges = [e for e in edges if e.get("type", "").upper() in valid_types]
+        
+        print(f"✅ Parsed: {len(nodes)} nodes, {len(edges)} relationships")
+        return {"nodes": nodes, "edges": edges}
+
     def evaluate_relevance(self, query, context):
         prompt = f"""
 Query: {query}
