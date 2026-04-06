@@ -63,7 +63,7 @@ class EvaluatorAgent:
         load_dotenv()
         
         self.groq_key = groq_api_key or os.getenv("GROQ_API_KEY")
-        self.client = Groq(api_key=self.groq_key)
+        self.client = Groq(api_key=self.groq_key) if self.groq_key else None
         self.model = "llama-3.3-70b-versatile"
         
         # Initialize services
@@ -171,7 +171,8 @@ class EvaluatorAgent:
             # Step 7: Check termination conditions
             should_terminate, termination_reason = self._check_termination(
                 state.eval_state,
-                state.messages
+                state.messages,
+                state.current_input,
             )
             
             if should_terminate:
@@ -197,7 +198,7 @@ class EvaluatorAgent:
                 )
                 
                 # Write to Neo4j
-                self._write_defence_record(record)
+                self._write_defence_record(record, course_id=state.metadata.get("course_id", "unknown"))
                 
                 # Store record ID in state
                 state.metadata["defence_record_id"] = record.id
@@ -404,7 +405,7 @@ Return ONLY the question, no other text.
     
     # ==================== Termination Check ====================
     
-    def _check_termination(self, eval_state: EvalState, messages: List[Dict]) -> tuple:
+    def _check_termination(self, eval_state: EvalState, messages: List[Dict], latest_student_input: str = "") -> tuple:
         """
         Check if evaluation should terminate.
         
@@ -430,11 +431,15 @@ Return ONLY the question, no other text.
         
         # Condition 3: Student wants to stop after turn 3
         if eval_state.turn_count >= self.min_turns_before_student_exit:
-            if messages:
-                last_message = messages[-1].get("content", "").lower()
-                exit_keywords = ["stop", "done", "finish", "that's all", "no more", "end"]
-                if any(kw in last_message for kw in exit_keywords):
-                    return True, "Student requested to stop"
+            candidate_text = (latest_student_input or "").lower()
+            if not candidate_text and messages:
+                for msg in reversed(messages):
+                    if msg.get("role") == "student":
+                        candidate_text = str(msg.get("content", "")).lower()
+                        break
+            exit_keywords = ["stop", "done", "finish", "that's all", "no more", "end"]
+            if any(kw in candidate_text for kw in exit_keywords):
+                return True, "Student requested to stop"
         
         return False, ""
     
@@ -502,7 +507,7 @@ Return ONLY the JSON.
     
     # ==================== Database Operations ====================
     
-    def _write_defence_record(self, record: DefenceRecord) -> bool:
+    def _write_defence_record(self, record: DefenceRecord, course_id: str = "unknown") -> bool:
         """
         Write DefenceRecord to Neo4j.
         
@@ -513,6 +518,12 @@ Return ONLY the JSON.
             Success status
         """
         try:
+            if hasattr(self.graph_manager, "create_defence_record"):
+                payload = record.to_dict()
+                payload["course_id"] = course_id or "unknown"
+                result = self.graph_manager.create_defence_record(payload)
+                return result.get("status") == "success"
+
             query, params = CypherQueries.create_defence_record(record)
             result = self.graph_manager.db.run_query(query, params)
             logger.info(f"DefenceRecord created: {record.id}")
@@ -536,6 +547,8 @@ Return ONLY the JSON.
             Model response or empty string
         """
         try:
+            if self.client is None:
+                return ""
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],

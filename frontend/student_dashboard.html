@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OmniProf Student Dashboard</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: #fff8ee;
+      --ink: #1b1a17;
+      --muted: #5d5a53;
+      --accent: #0f7b6c;
+      --accent-soft: #b5e6dd;
+      --warn: #a14c30;
+    }
+    body { margin: 0; font-family: "Space Grotesk", "Segoe UI", sans-serif; background: radial-gradient(circle at 20% 20%, #fff6d6 0, var(--bg) 45%); color: var(--ink); }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 20px; display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+    .card { background: var(--panel); border: 1px solid #e5d8c3; border-radius: 16px; padding: 16px; box-shadow: 0 8px 24px rgba(40,34,26,0.08); }
+    h1, h2 { margin: 0 0 12px; }
+    #messages { height: 360px; overflow: auto; border: 1px solid #dfcfb8; border-radius: 12px; padding: 10px; background: #fffdf9; }
+    .msg { margin: 10px 0; }
+    .meta { font-size: 12px; color: var(--muted); }
+    .assistant { background: #ecf9f6; border-left: 4px solid var(--accent); padding: 8px; border-radius: 8px; }
+    textarea, input, button { font: inherit; }
+    textarea { width: 100%; min-height: 90px; border-radius: 10px; border: 1px solid #d8c6ae; padding: 10px; }
+    button { border: 0; border-radius: 10px; background: var(--accent); color: white; padding: 10px 12px; cursor: pointer; }
+    button.secondary { background: #d8c6ae; color: #2d241a; }
+    .chip { display: inline-block; font-size: 12px; padding: 4px 8px; border-radius: 999px; background: var(--accent-soft); margin-right: 6px; }
+    .warn { color: var(--warn); font-weight: 700; }
+    .band { height: 12px; border-radius: 999px; background: #dcd4c7; overflow: hidden; }
+    .band > span { display: block; height: 100%; background: linear-gradient(90deg, #f39f5f, #8dce8e, #0f7b6c); }
+    @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="card">
+      <h1>Student Dashboard</h1>
+      <p id="evalIndicator" class="warn" style="display:none;">You are being evaluated</p>
+      <div id="messages"></div>
+      <p class="meta">Active topic: <strong id="activeTopic">-</strong></p>
+      <textarea id="chatInput" placeholder="Ask your TA agent..."></textarea>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button onclick="sendChat()">Send</button>
+        <button class="secondary" onclick="loadProgress()">Refresh Progress</button>
+      </div>
+    </section>
+
+    <aside class="card">
+      <h2>Progress View</h2>
+      <div id="overview"></div>
+      <div id="mastery"></div>
+      <hr />
+      <h2>Submission</h2>
+      <input id="submissionCourse" placeholder="course id (e.g. cs101)" />
+      <input id="submissionFile" type="file" />
+      <button style="margin-top:8px;" onclick="submitAssignment()">Upload & Enter Evaluation</button>
+      <p id="submissionStatus" class="meta"></p>
+    </aside>
+  </div>
+
+  <script>
+    const API_BASE = localStorage.getItem("omniprof_api") || "http://127.0.0.1:8000";
+    const TOKEN = localStorage.getItem("omniprof_token") || "";
+    const SESSION_ID = localStorage.getItem("omniprof_session") || "student-session";
+    let ws;
+
+    function authHeaders() {
+      return { "Authorization": `Bearer ${TOKEN}` };
+    }
+
+    function connectWs() {
+      const url = `${API_BASE.replace("http", "ws")}/ws/chat?token=${encodeURIComponent(TOKEN)}&session_id=${encodeURIComponent(SESSION_ID)}`;
+      ws = new WebSocket(url);
+      ws.onmessage = (evt) => {
+        const data = JSON.parse(evt.data);
+        if (data.active_topic_node_name) {
+          document.getElementById("activeTopic").textContent = data.active_topic_node_name;
+        }
+        if (data.evaluation_mode) {
+          document.getElementById("evalIndicator").style.display = "block";
+        }
+        if (data.event === "start") {
+          appendAssistantMessage("");
+          return;
+        }
+        if (data.event === "token") {
+          streamAssistantToken(data.token || "");
+          return;
+        }
+        if (data.event === "complete") {
+          finalizeAssistantMessage();
+        }
+      };
+    }
+
+    function appendMessage(role, text, metaText = "") {
+      const div = document.createElement("div");
+      div.className = "msg";
+      div.innerHTML = `<div><strong>${role}:</strong> ${text}</div>${metaText ? `<div class='meta'>${metaText}</div>` : ""}`;
+      document.getElementById("messages").appendChild(div);
+      document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
+    }
+
+    function appendAssistantMessage(initial) {
+      const div = document.createElement("div");
+      div.className = "msg assistant";
+      div.id = "assistant-stream";
+      div.textContent = initial;
+      document.getElementById("messages").appendChild(div);
+    }
+
+    function streamAssistantToken(tok) {
+      const target = document.getElementById("assistant-stream");
+      if (!target) return;
+      target.textContent += tok;
+      document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
+    }
+
+    function finalizeAssistantMessage() {
+      const target = document.getElementById("assistant-stream");
+      if (target) target.removeAttribute("id");
+    }
+
+    function sendChat() {
+      const text = document.getElementById("chatInput").value.trim();
+      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+      appendMessage("You", text);
+      ws.send(JSON.stringify({ message: text }));
+      document.getElementById("chatInput").value = "";
+    }
+
+    async function loadProgress() {
+      const res = await fetch(`${API_BASE}/student/progress`, { headers: authHeaders() });
+      const data = await res.json();
+      if (data.status !== "success") return;
+
+      document.getElementById("overview").innerHTML = `
+        <p><span class='chip'>Modules explored: ${data.modules_explored}</span>
+        <span class='chip'>Concepts visited: ${data.concepts_visited}</span></p>`;
+
+      const mastery = document.getElementById("mastery");
+      mastery.innerHTML = "";
+      (data.mastery || []).forEach((row) => {
+        const item = document.createElement("div");
+        const pct = Math.round((row.mastery_probability || 0) * 100);
+        item.innerHTML = `
+          <div class='meta'>${row.concept_name} (${row.confidence_band})</div>
+          <div class='band'><span style='width:${pct}%'></span></div>`;
+        mastery.appendChild(item);
+      });
+    }
+
+    async function submitAssignment() {
+      const fileInput = document.getElementById("submissionFile");
+      if (!fileInput.files.length) return;
+      const form = new FormData();
+      form.append("file", fileInput.files[0]);
+      const courseId = document.getElementById("submissionCourse").value.trim();
+      const res = await fetch(`${API_BASE}/student/submit-assignment?course_id=${encodeURIComponent(courseId)}`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: form,
+      });
+      const data = await res.json();
+      document.getElementById("submissionStatus").textContent = `${data.indicator || ""} • submission_id=${data.submission_id || "-"}`;
+      if (data.evaluation_mode) {
+        document.getElementById("evalIndicator").style.display = "block";
+      }
+    }
+
+    connectWs();
+    loadProgress();
+  </script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 fastapi
 uvicorn
+python-multipart
 pypdf
 python-docx
 python-pptx
@@ -12,6 +13,11 @@ python-dotenv
 PyJWT
 bcrypt
 pydantic
+email-validator
 langgraph
 langchain
 langchain-groq
+httpx
+websockets
+pytest
+pytest-cov

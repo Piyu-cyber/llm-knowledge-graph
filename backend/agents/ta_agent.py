@@ -13,6 +13,7 @@ Features:
 import logging
 import json
 import re
+import math
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
@@ -77,7 +78,7 @@ class TAAgent:
         load_dotenv()
         
         self.groq_key = groq_api_key or os.getenv("GROQ_API_KEY")
-        self.client = Groq(api_key=self.groq_key)
+        self.client = Groq(api_key=self.groq_key) if self.groq_key else None
         self.model = "llama-3.3-70b-versatile"  # Larger model for better reasoning
         
         # Initialize services
@@ -451,26 +452,36 @@ Return ONLY the JSON, no other text.
         """
         try:
             mastery_data = {}
+
+            concept_nodes = self.graph_manager.get_concept_nodes() if hasattr(self.graph_manager, "get_concept_nodes") else []
+
+            def _find_concept_id(name: str) -> Optional[str]:
+                needle = (name or "").strip().lower()
+                for node in concept_nodes:
+                    if str(node.get("name", "")).strip().lower() == needle:
+                        return node.get("id")
+                return None
+
+            def _theta_to_mastery(theta: float) -> float:
+                t = float(theta)
+                if 0.0 <= t <= 1.0:
+                    return t
+                exponent = max(-500.0, min(500.0, -1.7 * t))
+                return 1.0 / (1.0 + math.exp(exponent))
             
             for concept in concepts:
                 try:
-                    # Query StudentOverlay
-                    query = """
-                    MATCH (s:StudentOverlay {user_id: $user_id})
-                    MATCH (c:CONCEPT {name: $concept})
-                    MATCH (s)-[:KNOWS]->(c)
-                    RETURN s.mastery_probability as mastery
-                    """
-                    
-                    result = self.graph_manager.db.run_query(
-                        query,
-                        {"user_id": student_id, "concept": concept}
-                    )
-                    
-                    if result:
-                        mastery = result[0].get("mastery", 0.5)
+                    concept_id = _find_concept_id(concept)
+                    if concept_id:
+                        overlay = self.graph_manager.get_student_overlay(student_id, concept_id)
+                        if overlay:
+                            if overlay.get("mastery_probability") is not None:
+                                mastery = float(overlay.get("mastery_probability", 0.5))
+                            else:
+                                mastery = _theta_to_mastery(float(overlay.get("theta", 0.0)))
+                        else:
+                            mastery = 0.5
                     else:
-                        # Default for unseen concepts
                         mastery = 0.5
                     
                     mastery_data[concept] = mastery
@@ -538,7 +549,7 @@ Return ONLY the JSON, no other text.
                 return False, None
             
             # Find primary concept (usually the first or most mentioned)
-            primary_concept = list(mastery_data.keys())[0] if mastery_data else None
+            primary_concept = min(mastery_data, key=mastery_data.get) if mastery_data else None
             primary_mastery = mastery_data.get(primary_concept, 0.5)
             
             should_use_socratic = primary_mastery < self.mastery_threshold_socratic
@@ -680,7 +691,9 @@ Return only the simplified explanation, no other text.
 """
             
             simplified = self._call_llm(prompt)
-            return simplified if simplified else answer
+            if simplified:
+                return simplified
+            return f"Let's break this down simply: {answer}"
             
         except Exception as e:
             logger.warning(f"Simplification error: {str(e)}")
@@ -716,7 +729,9 @@ Return the enhanced explanation, no other text.
 """
             
             deepened = self._call_llm(prompt)
-            return deepened if deepened else answer
+            if deepened:
+                return deepened
+            return f"{answer}\n\nAdvanced extension: connect this to adjacent higher-level concepts and edge cases."
             
         except Exception as e:
             logger.warning(f"Deepening error: {str(e)}")
@@ -783,7 +798,9 @@ Return the Socratic restructuring, no other text.
 """
             
             socratic_response = self._call_llm(prompt)
-            return socratic_response if socratic_response else answer
+            if socratic_response:
+                return socratic_response
+            return f"{socratic_question}\n\nHint: {answer}"
             
         except Exception as e:
             logger.warning(f"Socratic method application error: {str(e)}")
@@ -885,6 +902,8 @@ Keep it to 1-2 sentences.
             Model response or empty string on error
         """
         try:
+            if self.client is None:
+                return ""
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],

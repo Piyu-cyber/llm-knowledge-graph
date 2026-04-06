@@ -28,6 +28,7 @@ except ImportError:
 
 from backend.db.neo4j_driver import Neo4jGraphManager
 from backend.services.rag_service import RAGService
+from backend.services.jina_multimodal_service import JinaMultimodalService
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ class MemoryService:
                  neo4j_user: Optional[str] = None,
                  neo4j_password: Optional[str] = None,
                  rag_service: Optional['RAGService'] = None,
-                 embedding_dim: int = 384):
+                 embedding_dim: int = 2048):
         """
         Initialize Memory Service.
         
@@ -142,6 +143,7 @@ class MemoryService:
         
         self.rag_service = rag_service or RAGService()
         self.embedding_dim = embedding_dim
+        self.embedding_service = JinaMultimodalService(embedding_dim=self.embedding_dim)
         
         # Initialize FAISS index
         self.index = self._initialize_faiss_index()
@@ -151,6 +153,7 @@ class MemoryService:
         # Format: {faiss_id: {record_id, student_id, session_id, ...}}
         self.index_metadata: Dict[int, Dict[str, Any]] = {}
         self.next_faiss_id = 0
+        self.metadata_path = f"{self.index_path}.meta.json"
         
         # Load index if exists
         self._load_index()
@@ -194,7 +197,13 @@ class MemoryService:
             import os
             if os.path.exists(self.index_path):
                 self.index = faiss.read_index(self.index_path)
-                # TODO: Load metadata from companion file
+                if os.path.exists(self.metadata_path):
+                    with open(self.metadata_path, "r", encoding="utf-8") as mf:
+                        metadata_payload = json.load(mf)
+                    self.index_metadata = {
+                        int(k): v for k, v in (metadata_payload.get("index_metadata", {}) or {}).items()
+                    }
+                    self.next_faiss_id = int(metadata_payload.get("next_faiss_id", len(self.index_metadata)))
                 logger.info(f"Loaded FAISS index from {self.index_path}")
         except Exception as e:
             logger.warning(f"Could not load FAISS index: {str(e)}")
@@ -214,7 +223,15 @@ class MemoryService:
             import os
             os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
             faiss.write_index(self.index, self.index_path)
-            # TODO: Save metadata to companion file
+            with open(self.metadata_path, "w", encoding="utf-8") as mf:
+                json.dump(
+                    {
+                        "next_faiss_id": self.next_faiss_id,
+                        "index_metadata": self.index_metadata,
+                    },
+                    mf,
+                    indent=2,
+                )
             logger.info(f"Saved FAISS index to {self.index_path}")
             return True
         except Exception as e:
@@ -223,6 +240,17 @@ class MemoryService:
     
     
     # ==================== Episodic Memory Writing ====================
+
+    def _fit_embedding_dim(self, embedding: np.ndarray) -> np.ndarray:
+        """Pad/truncate vectors to configured embedding dimension."""
+        vec = np.array(embedding, dtype=np.float32).flatten()
+        if vec.shape[0] == self.embedding_dim:
+            return vec
+        if vec.shape[0] > self.embedding_dim:
+            return vec[: self.embedding_dim]
+        out = np.zeros((self.embedding_dim,), dtype=np.float32)
+        out[: vec.shape[0]] = vec
+        return out
     
     def write_episodic_record(self, record: EpisodicRecord) -> bool:
         """
@@ -247,7 +275,7 @@ class MemoryService:
                 embedding = np.array(embedding, dtype=np.float32)
             
             # Ensure it's float32 and normalized
-            embedding = np.array(embedding, dtype=np.float32).reshape(1, -1)
+            embedding = self._fit_embedding_dim(np.array(embedding, dtype=np.float32)).reshape(1, -1)
             
             # Add to FAISS index
             self.index.add(embedding)
@@ -307,13 +335,45 @@ class MemoryService:
         if not self.index or not faiss or not self.index_metadata:
             logger.debug("No episodic memories available")
             return []
+
+        if query_embedding is None:
+            # Fall back to recency + concept overlap heuristic when no query vector is available.
+            current_timestamp = current_timestamp or int(datetime.now().timestamp())
+            rows: List[RetrievedEpisodicMemory] = []
+            for idx, metadata in self.index_metadata.items():
+                if metadata.get("student_id") != student_id:
+                    continue
+                memory_timestamp = int(metadata.get("timestamp_unix", current_timestamp))
+                days_since = max(0.0, (current_timestamp - memory_timestamp) / (24 * 3600))
+                memory_concepts = set(metadata.get("concept_node_ids", []))
+                overlap = bool(memory_concepts & set(current_concept_ids))
+                base = 0.6 if overlap else 0.35
+                temporal = base * math.exp(-self.TEMPORAL_LAMBDA * days_since)
+                final = base if overlap else temporal
+                rows.append(
+                    RetrievedEpisodicMemory(
+                        record_id=metadata.get("record_id"),
+                        student_id=metadata.get("student_id"),
+                        session_id=metadata.get("session_id"),
+                        message=metadata.get("message"),
+                        concept_node_ids=metadata.get("concept_node_ids", []),
+                        timestamp_unix=memory_timestamp,
+                        days_since=days_since,
+                        base_score=base,
+                        temporal_score=temporal,
+                        has_concept_overlap=overlap,
+                        final_score=final,
+                    )
+                )
+            rows.sort(key=lambda x: x.final_score, reverse=True)
+            return rows[: (top_k or self.DEFAULT_TOP_K)]
         
         top_k = top_k or self.DEFAULT_TOP_K
         current_timestamp = current_timestamp or int(datetime.now().timestamp())
         
         try:
             # Normalize query embedding
-            query = np.array(query_embedding, dtype=np.float32).reshape(1, -1)
+            query = self._fit_embedding_dim(np.array(query_embedding, dtype=np.float32)).reshape(1, -1)
             
             # Search FAISS for top results (we'll filter by student later)
             k = min(top_k * 5, len(self.index_metadata))  # Get more to filter
@@ -321,7 +381,7 @@ class MemoryService:
             
             results = []
             
-            for dist, idx in zip(distances[0], indices):
+            for dist, idx in zip(distances[0], indices[0]):
                 if idx not in self.index_metadata:
                     continue
                 
@@ -399,6 +459,23 @@ class MemoryService:
         try:
             if not concept_ids:
                 return []
+
+            if not hasattr(self.graph_manager, "db"):
+                rows: List[Dict[str, Any]] = []
+                for concept_id in concept_ids:
+                    if hasattr(self.graph_manager, "get_semantic_nodes"):
+                        for item in self.graph_manager.get_semantic_nodes(student_id, concept_id):
+                            rows.append(
+                                {
+                                    "id": item.get("id"),
+                                    "fact": item.get("fact"),
+                                    "confidence": item.get("confidence", 0.0),
+                                    "concept_id": concept_id,
+                                    "created_at": item.get("created_at"),
+                                }
+                            )
+                rows.sort(key=lambda x: float(x.get("confidence", 0.0)), reverse=True)
+                return rows
             
             # Query Neo4j for SemanticNode linked to concepts
             query = (
@@ -445,6 +522,14 @@ class MemoryService:
         try:
             if not concept_ids:
                 return []
+
+            if not hasattr(self.graph_manager, "db"):
+                rows: List[Dict[str, Any]] = []
+                for concept_id in concept_ids:
+                    if hasattr(self.graph_manager, "get_memory_anchors"):
+                        rows.extend(self.graph_manager.get_memory_anchors(student_id, concept_id))
+                rows.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
+                return rows[:5]
             
             # Query Neo4j for MemoryAnchor linked to concepts
             query = (
@@ -575,6 +660,15 @@ class MemoryService:
                 overlay_data = student_overlay.get(concept_id, {})
                 
                 if overlay_data:
+                    if isinstance(overlay_data, (int, float)):
+                        summary["relevant_concepts"].append({
+                            "concept_id": concept_id,
+                            "theta": 0.0,
+                            "slip": 0.1,
+                            "mastery_probability": float(overlay_data),
+                        })
+                        continue
+
                     summary["relevant_concepts"].append({
                         "concept_id": concept_id,
                         "theta": overlay_data.get("theta", 0.0),

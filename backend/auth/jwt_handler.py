@@ -4,7 +4,7 @@ Handles token creation, verification, and validation
 """
 
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import os
 from dotenv import load_dotenv
@@ -47,12 +47,13 @@ def create_access_token(
         raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
     
     # Create token payload
+    now_utc = datetime.now(timezone.utc)
     to_encode = {
         "user_id": user_id,
         "role": role,
         "course_ids": course_ids,
-        "exp": datetime.utcnow() + expires_delta,
-        "iat": datetime.utcnow()
+        "exp": now_utc + expires_delta,
+        "iat": now_utc
     }
     
     # Encode token

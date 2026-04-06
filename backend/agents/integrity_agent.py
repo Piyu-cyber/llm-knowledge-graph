@@ -10,8 +10,9 @@ Features:
 """
 
 import logging
+import os
 import re
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from statistics import mean, stdev
 
 from backend.agents.state import AgentState
@@ -71,7 +72,8 @@ class IntegrityAgent:
     
     def __init__(self, neo4j_uri: Optional[str] = None,
                  neo4j_user: Optional[str] = None,
-                 neo4j_password: Optional[str] = None):
+                 neo4j_password: Optional[str] = None,
+                 min_token_threshold: Optional[int] = None):
         """
         Initialize Integrity Agent.
         
@@ -80,7 +82,6 @@ class IntegrityAgent:
             neo4j_user: Neo4j username
             neo4j_password: Neo4j password
         """
-        import os
         from dotenv import load_dotenv
         
         load_dotenv()
@@ -93,7 +94,7 @@ class IntegrityAgent:
         
         # Detection thresholds
         self.sdi_anomaly_threshold = 85      # Flag if SDI > 85
-        self.min_token_threshold = 500       # Suppress SDI until >= 500 tokens
+        self.min_token_threshold = int(min_token_threshold if min_token_threshold is not None else os.getenv("INTEGRITY_MIN_TOKENS", "500"))
     
     
     # ==================== Main Agent Entry Point ====================
@@ -177,13 +178,30 @@ class IntegrityAgent:
                 
                 logger.info(f"DefenceRecord {defence_record_id} updated with "
                            f"integrity_score={integrity_score:.2f}")
+
+                # Write completed defence package into HITL queue.
+                record = self.graph_manager.get_defence_record(defence_record_id) if hasattr(self.graph_manager, "get_defence_record") else None
+                if record and hasattr(self.graph_manager, "enqueue_hitl_review"):
+                    self.graph_manager.enqueue_hitl_review(
+                        {
+                            "defence_record_id": defence_record_id,
+                            "student_id": state.student_id,
+                            "course_id": record.get("course_id", state.metadata.get("course_id")),
+                            "transcript": record.get("transcript", []),
+                            "ai_recommended_grade": record.get("ai_recommended_grade", state.metadata.get("ai_recommended_grade", 0.0)),
+                            "integrity_score": integrity_score,
+                            "sdi": sdi,
+                            "sdi_visible": has_sufficient_history,
+                            "status": status,
+                        }
+                    )
             
             # Step 5: Update state
             state.metadata["integrity_score"] = integrity_score
             state.metadata["anomalous_input"] = anomalous_input
+            state.metadata["sdi_visible"] = has_sufficient_history
             if sdi is not None:
                 state.metadata["sdi"] = sdi
-                state.metadata["sdi_visible"] = has_sufficient_history
             
             # Mark completion
             state.mark_transfer(
@@ -228,8 +246,26 @@ class IntegrityAgent:
             RETURN c.name as topic
             """
             
-            # In a real system, you would query message history database
-            # For now, return empty list
+            # Fallback for local/test runs: allow explicit samples from metadata-driven stores.
+            if hasattr(self.graph_manager, "_read_json_list") and hasattr(self.graph_manager, "_defence_records_path"):
+                rows = self.graph_manager._read_json_list(self.graph_manager._defence_records_path())
+                samples: List[Dict] = []
+                for row in rows:
+                    if str(row.get("student_id")) != str(student_id):
+                        continue
+                    transcript = row.get("transcript", [])
+                    if isinstance(transcript, str):
+                        try:
+                            import json
+                            transcript = json.loads(transcript)
+                        except Exception:
+                            transcript = []
+                    for turn in transcript:
+                        if turn.get("role") == "student":
+                            samples.append({"content": turn.get("content", "")})
+                if samples:
+                    return samples
+
             logger.debug(f"Retrieving prior TA interactions for {student_id}")
             
             # TODO: Implement actual message history query
@@ -422,6 +458,17 @@ class IntegrityAgent:
             Success status
         """
         try:
+            if hasattr(self.graph_manager, "update_defence_record"):
+                result = self.graph_manager.update_defence_record(
+                    record_id,
+                    {
+                        "status": status,
+                        "integrity_score": integrity_score,
+                        "anomalous_input": anomalous_input,
+                    },
+                )
+                return result.get("status") == "success"
+
             query, params = CypherQueries.update_defence_record(
                 record_id,
                 status,

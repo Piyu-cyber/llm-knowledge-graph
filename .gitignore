@@ -1,9 +1,13 @@
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
 
 # Env files
 .env
+.venv/
+backend/.env
 
 # VS Code
 .vscode/
@@ -18,3 +22,9 @@ __pycache__/
 __pycache__/
 *.pyc
 temp_*.pdf
+
+# Runtime/generated artifacts
+rag_index.faiss
+rag_chunks.pkl
+backend/db/graph_store.pkl
+data/*.json

@@ -4,9 +4,13 @@ Handles PDF, DOCX, PPTX, and plain text file ingestion
 """
 
 import os
+import json
 import logging
-from typing import Dict, Tuple
+from datetime import datetime
+from typing import Dict, List, Tuple
 from pypdf import PdfReader
+
+from backend.services.jina_multimodal_service import JinaMultimodalService
 
 try:
     from docx import Document
@@ -33,7 +37,12 @@ class MultiFormatExtractor:
         '.doc': 'DOC',
         '.pptx': 'PPTX',
         '.ppt': 'PPT',
-        '.txt': 'Text'
+        '.txt': 'Text',
+        '.png': 'Image',
+        '.jpg': 'Image',
+        '.jpeg': 'Image',
+        '.webp': 'Image',
+        '.gif': 'Image'
     }
     
     @staticmethod
@@ -193,6 +202,109 @@ class MultiFormatExtractor:
         
         return text, file_format
 
+    @staticmethod
+    def extract_content_units(file_path: str, embedding_service: JinaMultimodalService) -> Tuple[List[Dict], str]:
+        """
+        Convert any supported file into modality-agnostic content units.
+
+        Each content unit includes source reference, page/slide index, and modality tag.
+        """
+        file_format = MultiFormatExtractor.get_file_format(file_path)
+        if not file_format:
+            raise Exception(
+                f"Unsupported file format. Supported: {', '.join(MultiFormatExtractor.SUPPORTED_FORMATS.keys())}"
+            )
+
+        source = os.path.basename(file_path)
+        units: List[Dict] = []
+
+        if file_format == "PDF":
+            reader = PdfReader(file_path)
+            for idx, page in enumerate(reader.pages, start=1):
+                text = (page.extract_text() or "").strip()
+                if text:
+                    units.append(
+                        {
+                            "source_ref": source,
+                            "position": idx,
+                            "modality": "text",
+                            "content": text,
+                            "embedding": embedding_service.embed_text(text),
+                        }
+                    )
+
+        elif file_format in ["DOCX", "DOC"]:
+            if not DOCX_AVAILABLE:
+                raise Exception("python-docx not installed. Run: pip install python-docx")
+            doc = Document(file_path)
+            for idx, paragraph in enumerate(doc.paragraphs, start=1):
+                text = paragraph.text.strip()
+                if text:
+                    units.append(
+                        {
+                            "source_ref": source,
+                            "position": idx,
+                            "modality": "text",
+                            "content": text,
+                            "embedding": embedding_service.embed_text(text),
+                        }
+                    )
+
+        elif file_format in ["PPTX", "PPT"]:
+            if not PPTX_AVAILABLE:
+                raise Exception("python-pptx not installed. Run: pip install python-pptx")
+            prs = Presentation(file_path)
+            for slide_idx, slide in enumerate(prs.slides, start=1):
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        text = (shape.text or "").strip()
+                        if text:
+                            units.append(
+                                {
+                                    "source_ref": source,
+                                    "position": slide_idx,
+                                    "modality": "text",
+                                    "content": text,
+                                    "embedding": embedding_service.embed_text(text),
+                                }
+                            )
+                    if getattr(shape, "shape_type", None) is not None and hasattr(shape, "image"):
+                        # Diagram/image unit, no OCR text extraction.
+                        units.append(
+                            {
+                                "source_ref": source,
+                                "position": slide_idx,
+                                "modality": "image",
+                                "content": "",
+                                "embedding": embedding_service.embed_diagram(file_path, description=f"slide_{slide_idx}_diagram"),
+                            }
+                        )
+
+        elif file_format == "Image":
+            units.append(
+                {
+                    "source_ref": source,
+                    "position": 1,
+                    "modality": "image",
+                    "content": "",
+                    "embedding": embedding_service.embed_image(file_path),
+                }
+            )
+
+        else:  # Text
+            text = MultiFormatExtractor.extract_from_txt(file_path)
+            units.append(
+                {
+                    "source_ref": source,
+                    "position": 1,
+                    "modality": "text",
+                    "content": text,
+                    "embedding": embedding_service.embed_text(text),
+                }
+            )
+
+        return units, file_format
+
 
 class IngestionService:
     """Handles document ingestion and knowledge extraction"""
@@ -202,6 +314,10 @@ class IngestionService:
         self.rag_service = rag_service
         self.graph_service = graph_service
         self.extractor = MultiFormatExtractor()
+        self.embedding_service = JinaMultimodalService(embedding_dim=2048)
+        self.review_queue_path = os.path.join("data", "review_queue.json")
+        # Enable strict pre-write validation for Phase 2 acceptance/integration flows.
+        self.enable_prewrite_validation = False
     
     def _normalize_text(self, text: str) -> str:
         """Clean and normalize extracted text"""
@@ -223,6 +339,115 @@ class IngestionService:
             value = value.split(":", 1)[1].strip()
         
         return value
+
+    def _append_review_queue(self, source_doc: str, errors: List[Dict]) -> None:
+        os.makedirs(os.path.dirname(self.review_queue_path), exist_ok=True)
+        payload = []
+        if os.path.exists(self.review_queue_path):
+            try:
+                with open(self.review_queue_path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+            except Exception:
+                payload = []
+        payload.append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "source_doc": source_doc,
+                "errors": errors,
+            }
+        )
+        with open(self.review_queue_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+    def _prevalidate_extraction(self, llm_data: Dict, source_doc: str) -> List[Dict]:
+        """Validate extracted graph payload before canonical write."""
+        issues: List[Dict] = []
+        nodes = llm_data.get("nodes", [])
+        edges = llm_data.get("edges", [])
+
+        # Duplicate concept names in extraction payload.
+        seen_concepts = set()
+        for node in nodes:
+            if node.get("level", "").upper() != "CONCEPT":
+                continue
+            key = node.get("name", "").strip().lower()
+            if key in seen_concepts:
+                issues.append({"type": "duplicate_concept", "name": node.get("name", "")})
+            seen_concepts.add(key)
+
+        # Cycle detection on REQUIRES edges in payload.
+        adj: Dict[str, List[str]] = {}
+        for edge in edges:
+            if edge.get("type", "").upper() != "REQUIRES":
+                continue
+            source = edge.get("source", "")
+            target = edge.get("target", "")
+            if source and target:
+                adj.setdefault(source, []).append(target)
+
+        visited = set()
+        stack = set()
+
+        def dfs(node: str) -> None:
+            visited.add(node)
+            stack.add(node)
+            for nxt in adj.get(node, []):
+                if nxt not in visited:
+                    dfs(nxt)
+                elif nxt in stack:
+                    issues.append({"type": "prerequisite_cycle", "at": node, "next": nxt})
+            stack.remove(node)
+
+        for n in list(adj.keys()):
+            if n not in visited:
+                dfs(n)
+
+        # Orphan detection in payload graph for non-module nodes.
+        names = [n.get("name", "") for n in nodes if n.get("name")]
+        connected = set()
+        for edge in edges:
+            connected.add(edge.get("source", ""))
+            connected.add(edge.get("target", ""))
+        for node in nodes:
+            if node.get("level", "").upper() == "MODULE":
+                continue
+            name = node.get("name", "")
+            if name and name not in connected:
+                issues.append({"type": "orphan_node", "name": name, "level": node.get("level")})
+
+        if issues:
+            self._append_review_queue(source_doc, issues)
+        return issues
+
+    def normalize_to_content_units(self, file_path: str) -> Dict:
+        """Public Phase 2 API: normalize source file into modality-agnostic units."""
+        units, file_format = self.extractor.extract_content_units(file_path, self.embedding_service)
+        return {
+            "status": "success",
+            "file_format": file_format,
+            "content_units": units,
+            "unit_count": len(units),
+        }
+
+    def extract_graph_from_units(self, content_units: List[Dict]) -> Dict:
+        """Extract graph payload with one LLM call per content unit."""
+        merged_nodes: List[Dict] = []
+        merged_edges: List[Dict] = []
+        calls = 0
+
+        for unit in content_units:
+            modality = unit.get("modality", "text")
+            if modality != "text":
+                continue
+            text = (unit.get("content") or "").strip()
+            if not text:
+                continue
+            calls += 1
+            payload = self.llm_service.extract_concepts_hierarchical(text)
+            merged_nodes.extend(payload.get("nodes", []))
+            merged_edges.extend(payload.get("edges", []))
+
+        return {"nodes": merged_nodes, "edges": merged_edges, "llm_calls": calls}
     
     def ingest(self, file_path: str, course_owner: str = "system") -> Dict:
         """
@@ -239,25 +464,41 @@ class IngestionService:
             # Step 1: Reset RAG
             self.rag_service.reset()
             
-            # Step 2: Extract text from file
-            logger.info(f"Extracting text from {file_path}")
-            text, file_format = self.extractor.extract_text(file_path)
+            # Step 2: Build modality-agnostic content units
+            logger.info(f"Normalizing content from {file_path}")
+            normalized = self.normalize_to_content_units(file_path)
+            file_format = normalized["file_format"]
+            units = normalized["content_units"]
+            text_units = [u.get("content", "") for u in units if u.get("modality") == "text" and u.get("content")]
+            text = "\n".join(text_units)
             
             if not text:
-                raise ValueError("No text extracted from document")
+                # Image-only docs are valid for multimodal indexing and should not crash ingestion.
+                text = ""
             
-            # Step 3: Normalize text
-            text = self._normalize_text(text)
+            # Step 3: Normalize text for LLM extraction
+            text = self._normalize_text(text) if text else ""
             
-            # Step 4: Extract hierarchical concepts using LLM
+            # Step 4: Extract hierarchical concepts using one call per text content unit
             logger.info("Extracting hierarchical concepts using LLM")
-            llm_data = self.llm_service.extract_concepts_hierarchical(text)
+            llm_data = self.extract_graph_from_units(units)
             
             if not llm_data or not llm_data.get("nodes"):
                 return {
                     "status": "error",
                     "message": "Failed to extract concepts from document"
                 }
+
+            # Step 4b: Pre-write validation (cycles, orphans, duplicates)
+            if self.enable_prewrite_validation:
+                prewrite_issues = self._prevalidate_extraction(llm_data, os.path.basename(file_path))
+                if prewrite_issues:
+                    return {
+                        "status": "error",
+                        "message": "Extraction failed validation",
+                        "validation_errors": prewrite_issues,
+                        "review_queued": True,
+                    }
             
             # Step 5: Insert into graph with hierarchical structure
             logger.info("Inserting into knowledge graph")
@@ -276,11 +517,12 @@ class IngestionService:
             validation_result = self.graph_service.validate_graph()
             
             # Step 7: Store full text in RAG
-            try:
-                self.rag_service.ingest_documents(text)
-                logger.info("Text stored in RAG system")
-            except Exception as e:
-                logger.warning(f"⚠️ RAG ingestion failed: {str(e)}")
+            if text:
+                try:
+                    self.rag_service.ingest_documents(text)
+                    logger.info("Text stored in RAG system")
+                except Exception as e:
+                    logger.warning(f"⚠️ RAG ingestion failed: {str(e)}")
             
             # Return results with validation info
             return {
@@ -295,7 +537,9 @@ class IngestionService:
                     "is_valid": validation_result["status"] == "valid",
                     "issue_count": validation_result.get("issue_count", 0),
                     "issues": validation_result.get("issues", [])
-                }
+                },
+                "content_units": len(units),
+                "llm_calls": llm_data.get("llm_calls", 0),
             }
         
         except Exception as e:
@@ -304,3 +548,36 @@ class IngestionService:
                 "status": "error",
                 "message": str(e)
             }
+
+    def ingest_incremental(self, file_path: str, course_owner: str = "system") -> Dict:
+        """Incrementally re-ingest one source document while preserving unrelated overlays."""
+        try:
+            normalized = self.normalize_to_content_units(file_path)
+            file_format = normalized["file_format"]
+            units = normalized["content_units"]
+            llm_data = self.extract_graph_from_units(units)
+            source_doc = os.path.basename(file_path)
+
+            if self.enable_prewrite_validation:
+                prewrite_issues = self._prevalidate_extraction(llm_data, source_doc)
+                if prewrite_issues:
+                    return {
+                        "status": "error",
+                        "message": "Extraction failed validation",
+                        "validation_errors": prewrite_issues,
+                        "review_queued": True,
+                    }
+
+            result = self.graph_service.incremental_reingest_from_llm(
+                data=llm_data,
+                course_owner=course_owner,
+                source_doc=source_doc,
+                file_format=file_format,
+            )
+
+            result["content_units"] = len(units)
+            result["llm_calls"] = llm_data.get("llm_calls", 0)
+            return result
+        except Exception as e:
+            logger.error(f"Incremental ingestion error: {str(e)}")
+            return {"status": "error", "message": str(e)}

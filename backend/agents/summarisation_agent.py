@@ -96,9 +96,7 @@ class SummarisationAgent:
             password=neo4j_password or os.getenv("NEO4J_PASSWORD", "password")
         )
         
-        self.llm_service = LLMService(
-            api_key=groq_api_key or os.getenv("GROQ_API_KEY")
-        )
+        self.llm_service = LLMService()
     
     
     # ==================== Background Task Entry Point ====================
@@ -403,6 +401,18 @@ class SummarisationAgent:
         try:
             import uuid
             memory.memory_id = str(uuid.uuid4())[:12]
+
+            if hasattr(self.graph_manager, "create_memory_anchor"):
+                result = self.graph_manager.create_memory_anchor(
+                    student_id=memory.student_id,
+                    session_id=session_id,
+                    summary=memory.summary_text,
+                    key_concepts=memory.concepts,
+                )
+                if result.get("status") == "success":
+                    return result.get("node_id")
+                if not hasattr(self.graph_manager, "db"):
+                    return None
             
             # Create memory anchor node
             query = (
@@ -573,6 +583,15 @@ class SummarisationAgent:
             Success status
         """
         try:
+            if hasattr(self.graph_manager, "create_semantic_node"):
+                result = self.graph_manager.create_semantic_node(
+                    student_id=semantic.student_id,
+                    fact=semantic.fact,
+                    concept_id=semantic.concept_id,
+                    confidence=semantic.confidence,
+                )
+                return result.get("status") == "success"
+
             query = (
                 "MATCH (student:User {id: $student_id}) "
                 "MATCH (concept:CONCEPT {id: $concept_id}) "
@@ -607,6 +626,44 @@ class SummarisationAgent:
         except Exception as e:
             logger.error(f"Semantic node writing error: {str(e)}")
             return False
+
+    async def archive_session_to_memory(self,
+                                        student_id: str,
+                                        session_id: str,
+                                        messages: List[Dict[str, str]],
+                                        concept_ids: List[str]) -> Dict[str, Any]:
+        """Archive a completed session outside real-time path into memory anchor + semantic facts."""
+        try:
+            text = "\n".join(m.get("content", "") for m in messages if m.get("content"))
+            summary = text[:400] if text else "Session completed with conceptual discussion."
+
+            memory = MemoryAnchor(
+                student_id=student_id,
+                session_date=datetime.now().isoformat(),
+                concepts=concept_ids,
+                confidence={cid: 0.5 for cid in concept_ids},
+                misconceptions=[],
+                summary_text=summary,
+            )
+
+            memory_id = self._write_memory_anchor(memory, session_id)
+            if not memory_id:
+                return {"status": "error", "message": "Failed to persist memory anchor"}
+
+            self._extract_and_create_semantic_nodes(
+                student_id=student_id,
+                session_id=session_id,
+                summary_text=summary,
+                concept_ids=concept_ids,
+            )
+
+            return {
+                "status": "success",
+                "memory_id": memory_id,
+                "concept_count": len(concept_ids),
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
     
     
     # ==================== Memory Retrieval ====================

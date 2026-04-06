@@ -2,6 +2,8 @@
 
 **AI-Driven Educational Platform with Multi-Agent Orchestration, Dual-Store Memory, and Adaptive Tutoring**
 
+Operational runbook and full API verification commands are documented in `PROJECT_AUDIT_AND_RUNBOOK.md`.
+
 
 ---
 
@@ -549,11 +551,9 @@ omniprof/
 ├── .gitignore
 ├── requirements.txt              # Python dependencies
 ├── README.md                      # This file
-├── Phase_4_Part1.md             # Phase 4 Part 1 documentation
-├── Phase_4_Part2.md             # Phase 4 Part 2 documentation
-├── Phase_4_Part3.md             # Phase 4 Part 3 documentation
-├── Phase_4_Part4.md             # Phase 4 Part 4 documentation
-└── Phase_5_Memory_System.md     # Phase 5 documentation
+├── RUN_COMMANDS.md               # Fast startup commands
+├── PHASE_WISE_TESTING_PLAN.md    # Phase testing matrix and gates
+└── PROJECT_AUDIT_AND_RUNBOOK.md  # Consolidated operational runbook
 ```
 
 ### Adding New Features
@@ -634,23 +634,20 @@ logger.error(f"Failed to update overlay: {error}")
 
 ### Common Issues & Solutions
 
-#### 1. Neo4j Connection Error
+#### 1. Backend Startup/Import Error
 
 ```
-Error: Could not connect to bolt://localhost:7687
+Error loading ASGI app / import path / command exits immediately
 ```
 
 **Solution:**
 ```bash
-# Check if Neo4j is running
-docker ps | grep neo4j
+# Run from repository root with repo-local venv
+cd llm-knowledge-graph
+./.venv/Scripts/python.exe -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload
 
-# If not running, start it:
-docker run --name neo4j -p 7687:7687 -p 7474:7474 \
-  -e NEO4J_AUTH=neo4j/password neo4j:4.4-community
-
-# Verify .env has correct credentials
-cat .env | grep NEO4J_
+# Or use start-dev.ps1 on Windows
+./start-dev.ps1
 ```
 
 #### 2. FAISS Import Error
@@ -762,7 +759,7 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
 
-### Database Debugging (inspect via Python API)
+### Graph Store Debugging (inspect via Python API)
 
 Use the `GraphManager` API to inspect and debug the graph store. Example:
 
@@ -832,8 +829,9 @@ cProfile.run('ta_agent.process(state)')
 ## Support & Documentation
 
 - **API Documentation**: http://localhost:8000/docs (Swagger UI)
-- **Phase 4 Documentation**: See `Phase_4_Part*.md` files
-- **Phase 5 Memory System**: See `Phase_5_Memory_System.md`
+- **Operations & API verification**: See `PROJECT_AUDIT_AND_RUNBOOK.md`
+- **Testing by phase**: See `PHASE_WISE_TESTING_PLAN.md`
+- **Quick startup commands**: See `RUN_COMMANDS.md`
 - **Code Comments**: Comprehensive docstrings in all modules
 
 ---

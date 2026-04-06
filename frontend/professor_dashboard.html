@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OmniProf Professor Dashboard</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    :root { --bg:#f2f7fb; --panel:#ffffff; --ink:#17202a; --accent:#005f73; --muted:#5d7184; }
+    body { margin:0; font-family:"Sora","Segoe UI",sans-serif; background:linear-gradient(140deg,#d8eff3 0%, var(--bg) 48%, #fef5df 100%); color:var(--ink); }
+    .wrap { max-width:1200px; margin:0 auto; padding:20px; display:grid; gap:14px; }
+    .card { background:var(--panel); border-radius:14px; padding:14px; border:1px solid #d2e3ef; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { text-align:left; border-bottom:1px solid #e5edf3; padding:8px; font-size:13px; vertical-align:top; }
+    button { border:0; border-radius:8px; padding:8px 10px; cursor:pointer; color:#fff; background:var(--accent); }
+    button.alt { background:#6d8aa3; }
+    #graph { height:360px; border:1px solid #d7e6ef; border-radius:10px; }
+    .mono { font-family: "JetBrains Mono", monospace; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="card">
+      <h2>HITL Queue</h2>
+      <table>
+        <thead>
+          <tr><th>Summary</th><th>AI Grade</th><th>Integrity</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="queueBody"></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Cohort Overview</h2>
+      <label>Course ID <input id="courseId" value="cs101" /></label>
+      <label>Inactive Days <input id="inactiveDays" type="number" value="7" min="1" /></label>
+      <button onclick="loadCohort()">Load Cohort</button>
+      <pre id="cohortOut" class="mono"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Read-only Graph</h2>
+      <div id="graph"></div>
+    </section>
+
+    <section class="card">
+      <h2>Learning Path Config</h2>
+      <p class="mono">Enter ordered concept IDs (comma-separated)</p>
+      <textarea id="orderedPath" style="width:100%;min-height:80px"></textarea>
+      <button onclick="saveLearningPath()">Save Learning Path</button>
+      <pre id="pathOut" class="mono"></pre>
+    </section>
+  </div>
+
+  <script>
+    const API_BASE = localStorage.getItem("omniprof_api") || "http://127.0.0.1:8000";
+    const TOKEN = localStorage.getItem("omniprof_token") || "";
+
+    function authHeaders() {
+      return { "Authorization": `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+    }
+
+    async function loadQueue() {
+      const res = await fetch(`${API_BASE}/professor/hitl-queue`, { headers: { "Authorization": `Bearer ${TOKEN}` } });
+      const data = await res.json();
+      const body = document.getElementById("queueBody");
+      body.innerHTML = "";
+      (data.items || []).forEach((row) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>
+            <div>${row.submission_summary || "-"}</div>
+            <details><summary>Transcript</summary><pre class='mono'>${JSON.stringify(row.transcript || [], null, 2)}</pre></details>
+            <div class='mono'>Feedback: ${row.ai_feedback || ""}</div>
+          </td>
+          <td>${row.ai_recommended_grade ?? "-"}<br><span class='mono'>${row.ai_grade_justification || ""}</span></td>
+          <td>${row.integrity_score ?? "-"} (n=${row.integrity_sample_size ?? 0})</td>
+          <td>
+            <button onclick='actQueue("${row.queue_id}","approve")'>Approve</button>
+            <button class='alt' onclick='actQueue("${row.queue_id}","modify_approve")'>Modify+Approve</button>
+            <button class='alt' onclick='actQueue("${row.queue_id}","reject_second_defence")'>Reject</button>
+          </td>`;
+        body.appendChild(tr);
+      });
+    }
+
+    async function actQueue(queueId, action) {
+      const payload = { action };
+      if (action === "modify_approve") {
+        payload.modified_grade = Number(prompt("Modified grade (0-1)", "0.75"));
+        payload.modified_feedback = prompt("Modified feedback", "Needs clearer justification.");
+      }
+      await fetch(`${API_BASE}/professor/hitl-queue/${queueId}/action`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+      });
+      loadQueue();
+      loadCohort();
+    }
+
+    async function loadCohort() {
+      const course = document.getElementById("courseId").value.trim();
+      const days = Number(document.getElementById("inactiveDays").value || 7);
+      const res = await fetch(`${API_BASE}/professor/cohort-overview?course_id=${encodeURIComponent(course)}&inactivity_days=${days}`, {
+        headers: { "Authorization": `Bearer ${TOKEN}` }
+      });
+      const data = await res.json();
+      document.getElementById("cohortOut").textContent = JSON.stringify(data, null, 2);
+      await loadGraph(course);
+    }
+
+    async function loadGraph(courseId) {
+      const res = await fetch(`${API_BASE}/professor/graph-visualization?course_id=${encodeURIComponent(courseId)}`, {
+        headers: { "Authorization": `Bearer ${TOKEN}` }
+      });
+      const data = await res.json();
+      const nodes = new vis.DataSet((data.nodes || []).map(n => ({ id: n.id, label: `${n.label}\n(${n.level})` })));
+      const edges = new vis.DataSet((data.edges || []).map(e => ({ from: e.source, to: e.target, label: e.relation })));
+      const container = document.getElementById("graph");
+      new vis.Network(container, { nodes, edges }, { interaction: { dragNodes: false }, physics: { stabilization: true } });
+    }
+
+    async function saveLearningPath() {
+      const course = document.getElementById("courseId").value.trim();
+      const ordered = document.getElementById("orderedPath").value
+        .split(",")
+        .map(v => v.trim())
+        .filter(Boolean);
+
+      const res = await fetch(`${API_BASE}/professor/learning-path`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ course_id: course, ordered_concept_ids: ordered, partial_order_edges: [] })
+      });
+      const data = await res.json();
+      document.getElementById("pathOut").textContent = JSON.stringify(data, null, 2);
+    }
+
+    loadQueue();
+    loadCohort();
+  </script>
+</body>
+</html>
