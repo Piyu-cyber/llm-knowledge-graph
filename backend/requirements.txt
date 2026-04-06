@@ -12,3 +12,6 @@ python-dotenv
 PyJWT
 bcrypt
 pydantic
+langgraph
+langchain
+langchain-groq
