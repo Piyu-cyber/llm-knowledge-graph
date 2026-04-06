@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Any
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
 
-from backend.agents.state import AgentState
+from backend.agents.state import AgentState, StateCheckpointStore
 from backend.agents.intent_classifier import IntentClassifier, AgentRouter
 from backend.agents.ta_agent import TAAgent, TAAgentResponse
 from backend.agents.evaluator_agent import EvaluatorAgent
@@ -50,8 +50,11 @@ class OmniProfGraph:
     
     def __init__(self, **kwargs):
         """Initialize graph and all agents"""
+        checkpoint_path = kwargs.pop("checkpoint_path", "data/session_checkpoints.json")
+
         self.intent_classifier = IntentClassifier()
         self.router = AgentRouter()
+        self.checkpoint_store = StateCheckpointStore(checkpoint_path=checkpoint_path)
         
         self.ta_agent = TAAgent(**kwargs)
         self.evaluator_agent = EvaluatorAgent(**kwargs)
@@ -475,9 +478,21 @@ class OmniProfGraph:
         """
         try:
             logger.info(f"OmniProfGraph: Starting execution for {state.student_id}")
+
+            if state.metadata.get("restore_checkpoint"):
+                restored = self.checkpoint_store.load(state.session_id)
+                if restored and restored.student_id == state.student_id:
+                    restored.current_input = state.current_input
+                    if not restored.messages or restored.messages[-1].get("content") != state.current_input:
+                        restored.messages.append({"role": "student", "content": state.current_input})
+                    restored.metadata.update(state.metadata)
+                    state = restored
             
             # Run graph
             result = self.graph.invoke(state)
+
+            # Persist checkpoint after each successful step for crash-safe resume.
+            self.checkpoint_store.save(result)
             
             logger.info(f"OmniProfGraph: Completed execution, "
                        f"final_agent={result.active_agent}, "
@@ -489,7 +504,15 @@ class OmniProfGraph:
             logger.error(f"OmniProfGraph execution error: {str(e)}", exc_info=True)
             state.error = str(e)
             state.error_count += 1
+            try:
+                self.checkpoint_store.save(state)
+            except Exception:
+                pass
             return state
+
+    def load_checkpoint(self, session_id: str) -> Optional[AgentState]:
+        """Load a saved session checkpoint by session_id."""
+        return self.checkpoint_store.load(session_id)
     
     
     async def ainvoke(self, state: AgentState) -> AgentState:

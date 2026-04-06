@@ -6,15 +6,22 @@ from dotenv import load_dotenv
 from groq import Groq
 
 # Load environment variables
+_backend_env = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(_backend_env)
 load_dotenv()
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+_groq_api_key = os.getenv("GROQ_API_KEY")
+client = Groq(api_key=_groq_api_key) if _groq_api_key else None
 
 
 class LLMService:
 
     # 🔥 Utility: Safe LLM call (IMPROVED)
     def _call_llm(self, prompt, temperature=0, retries=2):
+        if client is None:
+            print("⚠️ GROQ_API_KEY not set. LLM features are disabled.")
+            return None
+
         for attempt in range(retries):
             try:
                 response = client.chat.completions.create(

@@ -135,6 +135,7 @@ class Concept(GraphNode):
         source_doc_ref: str = "",
         visibility: Visibility = Visibility.GLOBAL,
         embedding: Optional[List[float]] = None,
+        difficulty: float = 0.0,
         node_id: Optional[str] = None
     ):
         super().__init__(
@@ -148,6 +149,13 @@ class Concept(GraphNode):
             node_id=node_id
         )
         self.topic_id = topic_id
+        self.difficulty = max(-4.0, min(4.0, float(difficulty)))
+
+    def to_dict(self) -> Dict:
+        """Convert to Neo4j property dict with IRT concept difficulty."""
+        data = super().to_dict()
+        data["difficulty"] = self.difficulty
+        return data
 
 
 class Fact(GraphNode):

@@ -3,7 +3,7 @@ Pydantic models/schemas for OmniProf v3.0
 Includes authentication, user, and data validation schemas
 """
 
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from typing import Optional, List, Dict, Any
 from enum import Enum
 
@@ -25,10 +25,12 @@ class UserRegister(BaseModel):
     full_name: Optional[str] = None
     role: UserRole = UserRole.STUDENT
     
-    @validator('username')
-    def username_alphanumeric(cls, v):
-        assert v.isalnum() or '-' in v or '_' in v, 'Username must be alphanumeric'
-        return v
+    @field_validator("username")
+    @classmethod
+    def username_alphanumeric(cls, value: str) -> str:
+        if not (value.isalnum() or "-" in value or "_" in value):
+            raise ValueError("Username must be alphanumeric")
+        return value
 
 
 class UserLogin(BaseModel):
@@ -56,8 +58,7 @@ class UserResponse(BaseModel):
     course_ids: List[str] = []
     created_at: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TokenPayload(BaseModel):

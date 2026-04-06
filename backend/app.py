@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, BackgroundTasks, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import shutil
@@ -7,8 +7,9 @@ import tempfile
 import bcrypt
 import jwt as pyjwt
 import logging
-from datetime import timedelta
-from typing import Optional, Dict, Tuple, Any
+import re
+from datetime import timedelta, datetime, timezone
+from typing import Optional, Dict, Tuple, Any, List
 
 from backend.services.graph_service import GraphService
 from backend.services.llm_service import LLMService
@@ -16,6 +17,10 @@ from backend.services.rag_service import RAGService
 from backend.services.crag_service import CRAGService
 from backend.services.ingestion_service import IngestionService
 from backend.services.cognitive_engine import CognitiveEngine
+from backend.services.llm_router import LLMRouter
+from backend.services.background_job_queue import BackgroundJobQueue
+from backend.services.compliance_service import ComplianceService
+from backend.db.neo4j_driver import Neo4jGraphManager
 from backend.auth.jwt_handler import create_access_token, verify_token, get_user_from_token
 from backend.auth.rbac import UserContext
 from backend.models.schema import (
@@ -109,6 +114,112 @@ def create_user_context(current_user: Dict) -> UserContext:
     )
 
 
+def _parse_iso_ts(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        normalized = str(value).replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except Exception:
+        return None
+
+
+def _active_topic_name_for_message(message: str, course_id: Optional[str]) -> Optional[str]:
+    if not message:
+        return None
+    candidates = graph_manager.search_concepts(message, course_id=course_id)
+    if not candidates:
+        for token in str(message).split():
+            cleaned = token.strip().lower()
+            if len(cleaned) < 4:
+                continue
+            candidates = graph_manager.search_concepts(cleaned, course_id=course_id)
+            if candidates:
+                break
+    if not candidates:
+        return None
+    topic_id = candidates[0].get("topic_id")
+    topic = graph_manager.nodes_data.get(topic_id) if topic_id else None
+    return topic.get("name") if topic else None
+
+
+def _build_student_progress(student_id: str, course_id: Optional[str]) -> Dict[str, Any]:
+    overlays = graph_manager.get_student_concepts(student_id)
+    if course_id:
+        overlays = [
+            row for row in overlays
+            if graph_manager.nodes_data.get(row.get("concept_id"), {}).get("course_owner") == course_id
+        ]
+
+    concepts_visited = 0
+    visited_modules = set()
+    mastery_bands = []
+
+    for row in overlays:
+        concept_id = row.get("concept_id")
+        concept = graph_manager.nodes_data.get(concept_id, {})
+        topic = graph_manager.nodes_data.get(concept.get("topic_id"), {}) if concept else {}
+        module = graph_manager.nodes_data.get(topic.get("module_id"), {}) if topic else {}
+
+        visited = bool(row.get("visited"))
+        if visited:
+            concepts_visited += 1
+            if module.get("id"):
+                visited_modules.add(module.get("id"))
+            elif topic.get("module_id"):
+                visited_modules.add(topic.get("module_id"))
+
+        mastery = float(row.get("mastery_probability", 0.0))
+        mastery = max(0.0, min(1.0, mastery))
+        if mastery < 0.4:
+            band = "low"
+        elif mastery < 0.75:
+            band = "medium"
+        else:
+            band = "high"
+
+        mastery_bands.append(
+            {
+                "concept_id": concept_id,
+                "concept_name": concept.get("name", concept_id),
+                "topic_name": topic.get("name"),
+                "module_name": module.get("name"),
+                "mastery_probability": mastery,
+                "confidence_band": band,
+                "visited": visited,
+            }
+        )
+
+    return {
+        "student_id": student_id,
+        "course_id": course_id,
+        "modules_explored": len(visited_modules),
+        "concepts_visited": concepts_visited,
+        "mastery": mastery_bands,
+    }
+
+
+def _iter_stream_chunks(text: str):
+    """Yield token-like chunks for websocket streaming (word+punctuation, preserving spaces)."""
+    if not text:
+        return
+
+    # Default to token-style chunks; allow env override for character streaming.
+    mode = os.getenv("WS_STREAM_CHUNK_MODE", "token").strip().lower()
+    if mode == "char":
+        for ch in text:
+            yield ch
+        return
+
+    # Token-like split preserving punctuation and trailing whitespace.
+    for chunk in re.findall(r"\w+|[^\w\s]|\s+", text):
+        if chunk:
+            yield chunk
+
+
 # 🔹 CORS (frontend access)
 app.add_middleware(
     CORSMiddleware,
@@ -121,12 +232,18 @@ app.add_middleware(
 # 🔹 Configure logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+for noisy_logger in ["httpx", "sentence_transformers", "transformers", "watchfiles.main"]:
+    logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
 # 🔹 Initialize shared services
 rag_service = RAGService()
 llm_service = LLMService()
+graph_manager = Neo4jGraphManager()
 graph_service = GraphService(graph_manager)
 cognitive_engine = CognitiveEngine()
+llm_router = LLMRouter(llm_service=llm_service)
+background_job_queue = BackgroundJobQueue(data_dir=graph_manager.data_dir)
+compliance_service = ComplianceService(data_dir=graph_manager.data_dir)
 
 ingestion_service = IngestionService(
     llm_service=llm_service,
@@ -140,8 +257,17 @@ crag_service = CRAGService(
     llm_service=llm_service
 )
 
-# 🔹 Initialize OmniProf multi-agent orchestration graph
-omniprof_graph = OmniProfGraph()
+# 🔹 Lazy initialize OmniProf multi-agent orchestration graph
+omniprof_graph: Optional[OmniProfGraph] = None
+
+
+def get_omniprof_graph() -> OmniProfGraph:
+    """Initialize the heavy multi-agent graph only when chat is first used."""
+    global omniprof_graph
+    if omniprof_graph is None:
+        logger.info("Initializing OmniProf graph on first chat request")
+        omniprof_graph = OmniProfGraph()
+    return omniprof_graph
 
 
 # ==================== AUTHENTICATION ENDPOINTS ====================
@@ -293,7 +419,7 @@ def get_current_user_info(current_user: Dict = Depends(get_current_user)):
 @app.get("/", tags=["Health"])
 def home():
     """Health check endpoint - public access"""
-    return {"message": "OmniProf v3.0 running 🚀", "version": "3.0.0"}
+    return {"message": "OmniProf v3.0 running", "version": "3.0.0"}
 
 
 # 🔹 Add concept manually (protected)
@@ -334,6 +460,7 @@ def add_concept(
 @app.post("/enrol", response_model=EnrollmentResponse, tags=["Enrollment"])
 def enrol_student(
     enrollment: EnrollmentRequest,
+    background_tasks: BackgroundTasks,
     current_user: Dict = Depends(get_current_user)
 ):
     """
@@ -364,8 +491,18 @@ def enrol_student(
                 detail="User ID and course ID are required"
             )
         
-        # Enroll student in course
-        result = graph_service.enroll_student(user_id, course_id)
+        # Enroll student in course asynchronously to avoid blocking on large graphs
+        result = graph_service.enqueue_enrollment_overlay_init(user_id, course_id, background_tasks)
+
+        # Keep in-memory auth profile aligned with enrollment metadata.
+        for username, user_data in users_db.items():
+            if user_data.get("user_id") != user_id:
+                continue
+            current_courses = set(user_data.get("course_ids", []))
+            current_courses.add(course_id)
+            user_data["course_ids"] = sorted(current_courses)
+            users_db[username] = user_data
+            break
         
         if result.get("status") == "error":
             raise HTTPException(
@@ -374,7 +511,7 @@ def enrol_student(
             )
         
         return EnrollmentResponse(
-            status=result.get("status", "error"),
+            status="success" if result.get("status") in {"success", "queued"} else "error",
             student_id=user_id,
             course_id=course_id,
             overlays_created=result.get("overlays_created", 0),
@@ -668,6 +805,8 @@ async def chat(
         
         if len(request.message) > 2000:
             raise HTTPException(status_code=400, detail="Message too long (max 2000 chars)")
+
+        route_result = llm_router.route("ta_tutoring", request.message)
         
         # Initialize agent state
         state = AgentState(
@@ -681,7 +820,9 @@ async def chat(
                 "course_id": request.course_id,
                 "user_role": current_user.get("role"),
                 "achievements": [],
-                "background_tasks": []
+                "background_tasks": [],
+                "restore_checkpoint": True,
+                "llm_reduced_mode": bool(route_result.get("reduced_mode", False)),
             }
         )
         
@@ -694,7 +835,7 @@ async def chat(
         # Execute LangGraph multi-agent workflow
         logger.info(f"Chat: Executing orchestration for {student_id} in session {request.session_id}")
         
-        result_state = omniprof_graph.invoke(state)
+        result_state = get_omniprof_graph().invoke(state)
         
         # Extract response from state
         agent_response = ""
@@ -722,6 +863,11 @@ async def chat(
             elif background_task_data.get("agent") == "summarisation_agent":
                 background_tasks.add_task(process_old_interactions_background)
                 logger.info("Background task queued: session summarization")
+
+            background_job_queue.enqueue(
+                job_type=background_task_data.get("agent", "background_task"),
+                payload=background_task_data,
+            )
         
         # Build response
         response = ChatResponse(
@@ -734,7 +880,10 @@ async def chat(
                 "achievements": result_state.metadata.get("achievements", []),
                 "new_achievements_count": result_state.metadata.get("new_achievements_count", 0),
                 "cognition_updates": result_state.metadata.get("cognition_updates", []),
-                "background_task_queued": bool(background_task_data)
+                "background_task_queued": bool(background_task_data),
+                "reduced_mode": bool(route_result.get("reduced_mode", False)),
+                "reduced_mode_notification": route_result.get("reduced_mode_notification"),
+                "llm_provider": route_result.get("provider"),
             },
             message_count=len(result_state.messages),
             error=result_state.error if result_state.error_count > 0 else None
@@ -753,3 +902,502 @@ async def chat(
             status_code=500,
             detail=f"Chat processing failed: {str(e)}"
         )
+
+
+# 🔹 Professor HITL queue viewer (protected)
+@app.get("/professor/hitl-queue", tags=["Professor"])
+def get_professor_hitl_queue(
+    current_user: Dict = Depends(get_professor_user)
+):
+    """Return HITL defence review queue entries visible to professor/admin."""
+    try:
+        role = current_user.get("role", "student")
+        if role == "admin":
+            rows = graph_manager.list_hitl_queue()
+        else:
+            rows = graph_manager.list_hitl_queue(current_user.get("course_ids", []))
+        return {"status": "success", "count": len(rows), "items": rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws/chat")
+async def websocket_chat(
+    websocket: WebSocket,
+    token: str = Query(...),
+    session_id: str = Query(...),
+    course_id: Optional[str] = Query(None),
+):
+    """Student websocket chat with token-style streaming chunks."""
+    await websocket.accept()
+    try:
+        user = get_user_from_token(token)
+        if user.get("role") not in ["student", "professor", "admin"]:
+            await websocket.send_json({"event": "error", "message": "Unauthorized role"})
+            await websocket.close(code=1008)
+            return
+
+        while True:
+            payload = await websocket.receive_json()
+            message = str(payload.get("message", "")).strip()
+            if not message:
+                await websocket.send_json({"event": "error", "message": "Message cannot be empty"})
+                continue
+
+            route_result = llm_router.route("ta_tutoring", message)
+
+            state = AgentState(
+                student_id=user.get("user_id", ""),
+                session_id=session_id,
+                current_input=message,
+                messages=[{"role": "student", "content": message}],
+                metadata={
+                    "course_id": course_id,
+                    "user_role": user.get("role"),
+                    "restore_checkpoint": True,
+                    "llm_reduced_mode": bool(route_result.get("reduced_mode", False)),
+                },
+            )
+            result_state = get_omniprof_graph().invoke(state)
+
+            response_text = ""
+            for msg in reversed(result_state.messages):
+                if msg.get("role") == "assistant":
+                    response_text = msg.get("content", "")
+                    break
+
+            active_topic_name = _active_topic_name_for_message(message, course_id)
+            evaluation_mode = result_state.metadata.get("intent") == "submission_defence"
+
+            await websocket.send_json(
+                {
+                    "event": "start",
+                    "active_topic_node_name": active_topic_name,
+                    "evaluation_mode": evaluation_mode,
+                    "reduced_mode": bool(route_result.get("reduced_mode", False)),
+                    "reduced_mode_notification": route_result.get("reduced_mode_notification"),
+                }
+            )
+
+            for token_chunk in _iter_stream_chunks(response_text):
+                await websocket.send_json(
+                    {
+                        "event": "token",
+                        "token": token_chunk,
+                        "active_topic_node_name": active_topic_name,
+                    }
+                )
+
+            await websocket.send_json(
+                {
+                    "event": "complete",
+                    "response": response_text,
+                    "active_agent": result_state.active_agent,
+                    "active_topic_node_name": active_topic_name,
+                    "evaluation_mode": evaluation_mode,
+                    "reduced_mode": bool(route_result.get("reduced_mode", False)),
+                    "reduced_mode_notification": route_result.get("reduced_mode_notification"),
+                }
+            )
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket chat disconnected")
+    except Exception as e:
+        await websocket.send_json({"event": "error", "message": str(e)})
+        await websocket.close(code=1011)
+
+
+@app.get("/student/progress", tags=["Student"])
+def get_student_progress(
+    course_id: Optional[str] = None,
+    current_user: Dict = Depends(get_current_user),
+):
+    """Student progress dashboard payload with mastery confidence bands."""
+    try:
+        if current_user.get("role") not in ["student", "professor", "admin"]:
+            raise HTTPException(status_code=403, detail="Student access required")
+        compliance_service.log_access(
+            actor_user_id=current_user.get("user_id", ""),
+            actor_role=current_user.get("role", "student"),
+            resource="student_progress",
+            target_user_id=current_user.get("user_id", ""),
+        )
+        payload = _build_student_progress(current_user.get("user_id", ""), course_id)
+        return {"status": "success", **payload}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/student/submit-assignment", tags=["Student"])
+async def submit_assignment(
+    file: UploadFile = File(...),
+    course_id: Optional[str] = None,
+    current_user: Dict = Depends(get_current_user),
+):
+    """Create submission record and start evaluation mode for defence chat."""
+    try:
+        if current_user.get("role") not in ["student", "admin"]:
+            raise HTTPException(status_code=403, detail="Student access required")
+
+        submission_id = f"sub_{datetime.now().timestamp()}"
+        summary = f"Submission file: {file.filename}" if file.filename else "Submission uploaded"
+        graph_manager.create_defence_record(
+            {
+                "id": submission_id,
+                "student_id": current_user.get("user_id"),
+                "course_id": course_id,
+                "submission_summary": summary,
+                "status": "pending_defence",
+                "transcript": [],
+                "ai_recommended_grade": None,
+                "ai_feedback": "",
+                "integrity_score": None,
+                "integrity_sample_size": 0,
+            }
+        )
+
+        return {
+            "status": "success",
+            "submission_id": submission_id,
+            "evaluation_mode": True,
+            "indicator": "You are being evaluated",
+            "pending_professor_approval": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/student/submissions/{submission_id}", tags=["Student"])
+def get_submission_status(
+    submission_id: str,
+    current_user: Dict = Depends(get_current_user),
+):
+    """Expose student-facing submission status including pending approval state."""
+    try:
+        record = graph_manager.get_defence_record(submission_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Submission not found")
+
+        if current_user.get("role") == "student" and record.get("student_id") != current_user.get("user_id"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        compliance_service.log_access(
+            actor_user_id=current_user.get("user_id", ""),
+            actor_role=current_user.get("role", "student"),
+            resource="student_submission_status",
+            target_user_id=record.get("student_id"),
+        )
+
+        status_text = str(record.get("status", "pending_defence"))
+        return {
+            "status": "success",
+            "submission_id": submission_id,
+            "workflow_status": status_text,
+            "pending_professor_approval": status_text in ["pending_professor_review", "pending_defence"],
+            "final_grade": record.get("final_grade"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/hitl-queue/{queue_id}/action", tags=["Professor"])
+def act_on_hitl_queue(
+    queue_id: str,
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Approve, modify+approve, or reject a queued AI defence record."""
+    try:
+        action = str(payload.get("action", "")).strip().lower()
+        if action not in ["approve", "modify_approve", "reject_second_defence"]:
+            raise HTTPException(status_code=400, detail="Invalid action")
+
+        queue_items = graph_manager.list_hitl_queue()
+        queue_row = None
+        for item in queue_items:
+            if str(item.get("queue_id")) == str(queue_id):
+                queue_row = item
+                break
+
+        if not queue_row:
+            raise HTTPException(status_code=404, detail="Queue item not found")
+
+        defence_record_id = queue_row.get("defence_record_id")
+        updates = {
+            "review_status": action,
+            "reviewed_by": current_user.get("user_id"),
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "review_note": payload.get("review_note", ""),
+        }
+
+        if action == "approve":
+            updates["final_grade"] = queue_row.get("ai_recommended_grade")
+            updates["status"] = "approved"
+        elif action == "modify_approve":
+            updates["final_grade"] = payload.get("modified_grade")
+            updates["final_feedback"] = payload.get("modified_feedback")
+            updates["status"] = "approved"
+        else:
+            updates["status"] = "rejected_second_defence_required"
+
+        graph_manager.update_hitl_queue_entry(queue_id, updates)
+        if defence_record_id:
+            graph_manager.update_defence_record(defence_record_id, updates)
+
+        return {
+            "status": "success",
+            "queue_id": queue_id,
+            "defence_record_id": defence_record_id,
+            "action": action,
+            "grade_recorded": action in ["approve", "modify_approve"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/cohort-overview", tags=["Professor"])
+def get_cohort_overview(
+    course_id: str,
+    inactivity_days: int = 7,
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Return aggregated cohort statistics from overlay data in one pass."""
+    try:
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        compliance_service.log_access(
+            actor_user_id=current_user.get("user_id", ""),
+            actor_role=current_user.get("role", "professor"),
+            resource="cohort_overview",
+            target_user_id=None,
+        )
+
+        now = datetime.now(timezone.utc)
+        overlays: List[Dict[str, Any]] = []
+        concepts_by_topic: Dict[str, List[float]] = {}
+        slip_by_concept: Dict[str, List[float]] = {}
+        student_last_seen: Dict[str, datetime] = {}
+
+        for _, node in graph_manager.nodes_data.items():
+            if node.get("level") != "CONCEPT" and "concept_id" not in node:
+                continue
+            if "concept_id" not in node:
+                continue
+            concept = graph_manager.nodes_data.get(node.get("concept_id"), {})
+            if concept.get("course_owner") != course_id:
+                continue
+
+            overlays.append(node)
+
+            topic_id = concept.get("topic_id") or "unknown"
+            concepts_by_topic.setdefault(topic_id, []).append(float(node.get("mastery_probability", 0.0)))
+
+            concept_name = concept.get("name", node.get("concept_id"))
+            slip_by_concept.setdefault(concept_name, []).append(float(node.get("slip", 0.0)))
+
+            user_id = node.get("user_id")
+            ts = _parse_iso_ts(node.get("last_updated") or node.get("created_at"))
+            if user_id and ts and (user_id not in student_last_seen or ts > student_last_seen[user_id]):
+                student_last_seen[user_id] = ts
+
+        topic_distribution = []
+        for topic_id, mastery_rows in concepts_by_topic.items():
+            topic = graph_manager.nodes_data.get(topic_id, {})
+            avg_mastery = sum(mastery_rows) / len(mastery_rows) if mastery_rows else 0.0
+            topic_distribution.append(
+                {
+                    "topic_id": topic_id,
+                    "topic_name": topic.get("name", topic_id),
+                    "student_count": len(mastery_rows),
+                    "avg_mastery_probability": round(avg_mastery, 4),
+                }
+            )
+
+        struggle = []
+        for concept_name, slips in slip_by_concept.items():
+            if not slips:
+                continue
+            struggle.append(
+                {
+                    "concept_name": concept_name,
+                    "avg_slip": round(sum(slips) / len(slips), 4),
+                    "sample_size": len(slips),
+                }
+            )
+        struggle.sort(key=lambda x: x["avg_slip"], reverse=True)
+
+        inactive_students = []
+        for user_id, seen_at in student_last_seen.items():
+            delta_days = (now - seen_at).days
+            if delta_days >= inactivity_days:
+                inactive_students.append({"student_id": user_id, "days_since_engagement": delta_days})
+
+        return {
+            "status": "success",
+            "course_id": course_id,
+            "topic_mastery_distribution": topic_distribution,
+            "highest_struggle_concepts": struggle[:10],
+            "inactive_students": sorted(inactive_students, key=lambda r: r["days_since_engagement"], reverse=True),
+            "overlay_count": len(overlays),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/graph-visualization", tags=["Professor"])
+def get_professor_graph_visualization(
+    course_id: Optional[str] = None,
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Read-only graph visualization payload for professors."""
+    try:
+        if (
+            course_id
+            and current_user.get("role") != "admin"
+            and course_id not in current_user.get("course_ids", [])
+        ):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        nodes = []
+        for node_id, node in graph_manager.nodes_data.items():
+            level = node.get("level", "")
+            if level not in ["MODULE", "TOPIC", "CONCEPT", "FACT"]:
+                continue
+            if course_id and node.get("course_owner") != course_id:
+                continue
+            nodes.append(
+                {
+                    "id": node_id,
+                    "label": node.get("name", node_id),
+                    "level": level,
+                    "visibility": node.get("visibility", "global"),
+                }
+            )
+
+        node_ids = {n["id"] for n in nodes}
+        edges = []
+        for edge in graph_manager._edge_records():
+            if edge.get("source") not in node_ids or edge.get("target") not in node_ids:
+                continue
+            data = edge.get("data", {})
+            edges.append(
+                {
+                    "source": edge.get("source"),
+                    "target": edge.get("target"),
+                    "relation": data.get("relation", "RELATED"),
+                    "weight": float(data.get("weight", 1.0)),
+                }
+            )
+
+        return {
+            "status": "success",
+            "read_only": True,
+            "nodes": nodes,
+            "edges": edges,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/learning-path", tags=["Professor"])
+def save_learning_path(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Persist ordered or partially ordered learning path for curriculum weighting."""
+    try:
+        course_id = str(payload.get("course_id", "")).strip()
+        if not course_id:
+            raise HTTPException(status_code=400, detail="course_id is required")
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        result = graph_manager.set_learning_path(
+            course_id=course_id,
+            ordered_concept_ids=payload.get("ordered_concept_ids", []),
+            partial_order_edges=payload.get("partial_order_edges", []),
+        )
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("message", "Failed to save learning path"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/learning-path", tags=["Professor"])
+def get_learning_path(
+    course_id: str,
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Read existing learning path configuration for professor UI."""
+    try:
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+        return graph_manager.get_learning_path(course_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/llm-router/health", tags=["Phase6"])
+def get_llm_router_health(
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Expose provider health, availability, and backoff windows."""
+    return llm_router.health_status()
+
+
+@app.post("/llm-router/route", tags=["Phase6"])
+def route_with_llm_router(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Probe router behavior for specific task/prompt combinations."""
+    task = str(payload.get("task", "ta_tutoring"))
+    prompt = str(payload.get("prompt", ""))
+    return llm_router.route(task, prompt)
+
+
+@app.get("/background-jobs/stats", tags=["Phase6"])
+def get_background_job_stats(
+    current_user: Dict = Depends(get_admin_user),
+):
+    """Observe queue depth and dead-letter depth."""
+    return {"status": "success", **background_job_queue.stats()}
+
+
+@app.post("/background-jobs/drain", tags=["Phase6"])
+def drain_background_jobs(
+    current_user: Dict = Depends(get_admin_user),
+):
+    """Process due background jobs and move repeated failures to dead-letter."""
+    handlers = {
+        "curriculum_agent": lambda _payload: None,
+        "summarisation_agent": lambda _payload: None,
+        "background_task": lambda _payload: None,
+    }
+    return background_job_queue.run_due_jobs(handlers=handlers)
+
+
+@app.get("/compliance/status", tags=["Phase6"])
+def get_compliance_status(
+    current_user: Dict = Depends(get_admin_user),
+):
+    """FERPA/GDPR readiness checks for encryption and audit logs."""
+    return compliance_service.status()

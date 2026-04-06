@@ -5,10 +5,12 @@ Module -> Topic -> Concept -> Fact with student overlays
 """
 
 import logging
+import math
 from typing import List, Dict, Optional
 from backend.db.neo4j_driver import Neo4jGraphManager
 from backend.db.neo4j_schema import Visibility
-from backend.auth.rbac import UserContext, RBACValidator, RBACLogger
+from backend.auth.rbac import UserContext, RBACFilter, RBACValidator, RBACLogger
+from backend.services.jina_multimodal_service import JinaMultimodalService
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,7 @@ class GraphService:
     
     def __init__(self,graph_manager):
         self.graph = graph_manager
+        self.embedding_service = JinaMultimodalService()
     
     # ==================== Utility Methods ====================
     
@@ -76,7 +79,8 @@ class GraphService:
         description: str = "",
         source_doc_ref: str = "",
         embedding: Optional[List[float]] = None,
-        visibility: str = "global"
+        visibility: str = "global",
+        difficulty: float = 0.0
     ) -> Dict:
         """Create a concept under a topic"""
         return self.graph.create_concept(
@@ -86,7 +90,8 @@ class GraphService:
             description=description,
             source_doc_ref=source_doc_ref,
             embedding=embedding,
-            visibility=visibility
+            visibility=visibility,
+            difficulty=difficulty
         )
     
     
@@ -327,14 +332,23 @@ class GraphService:
     
     def get_graph(self) -> Dict:
         """Get graph statistics and metadata"""
-        result = self.graph.db.run_query(
-            "MATCH (n) RETURN labels(n)[0] as type, count(n) as count "
-            "UNION ALL "
-            "MATCH ()-[r]->() RETURN type(r) as type, count(r) as count"
-        )
+        if hasattr(self.graph, "db") and hasattr(self.graph.db, "run_query"):
+            result = self.graph.db.run_query(
+                "MATCH (n) RETURN labels(n)[0] as type, count(n) as count "
+                "UNION ALL "
+                "MATCH ()-[r]->() RETURN type(r) as type, count(r) as count"
+            )
+            return {"status": "success", "graph_stats": result}
+
+        # RustWorkX fallback
+        node_count = self.graph.get_node_count() if hasattr(self.graph, "get_node_count") else 0
+        edge_count = self.graph.get_edge_count() if hasattr(self.graph, "get_edge_count") else 0
         return {
             "status": "success",
-            "graph_stats": result
+            "graph_stats": [
+                {"type": "nodes", "count": node_count},
+                {"type": "edges", "count": edge_count},
+            ],
         }
     
     
@@ -650,6 +664,46 @@ class GraphService:
         except Exception as e:
             logger.error(f"Hierarchical LLM insertion failed: {str(e)}")
             return {"status": "error", "message": str(e)}
+
+    def incremental_reingest_from_llm(
+        self,
+        data: Dict,
+        course_owner: str,
+        source_doc: str,
+        file_format: str = "Unknown",
+    ) -> Dict:
+        """
+        Incrementally re-ingest only nodes affected by source document.
+
+        Unrelated nodes and overlays remain untouched.
+        """
+        try:
+            existing = self.graph.get_nodes_by_source_doc(source_doc, course_owner=course_owner)
+            existing_ids = [n["id"] for n in existing]
+
+            # Delete previously ingested nodes from this source doc only.
+            delete_result = self.graph.delete_nodes(existing_ids)
+            if delete_result.get("status") != "success":
+                return {"status": "error", "message": "Failed to remove outdated document subgraph"}
+
+            insert_result = self.insert_from_llm_hierarchical(
+                data=data,
+                course_owner=course_owner,
+                source_doc=source_doc,
+                file_format=file_format,
+            )
+            if insert_result.get("status") != "success":
+                return insert_result
+
+            return {
+                "status": "success",
+                "reingested_source": source_doc,
+                "removed_nodes": len(existing_ids),
+                **insert_result,
+            }
+        except Exception as e:
+            logger.error(f"Incremental re-ingestion failed: {str(e)}")
+            return {"status": "error", "message": str(e)}
     
     
     # ==================== Student Enrollment ====================
@@ -685,3 +739,105 @@ class GraphService:
                 "user_id": user_id,
                 "course_id": course_id
             }
+
+    def enqueue_enrollment_overlay_init(self, user_id: str, course_id: str, background_tasks) -> Dict:
+        """Queue async overlay initialization so enrollment request returns immediately."""
+        background_tasks.add_task(self.graph.initialize_student_overlays, user_id, course_id)
+        return {
+            "status": "queued",
+            "user_id": user_id,
+            "course_id": course_id,
+            "overlays_created": 0,
+            "message": "Enrollment confirmed. Student overlay initialization queued."
+        }
+
+    def _is_visible_to_user(self, node: Dict, user_context: UserContext) -> bool:
+        allowed, _ = RBACFilter.assert_read_permission(node, user_context)
+        return allowed
+
+    def _theta_to_mastery(self, theta: float) -> float:
+        """Normalize theta-like values to [0, 1] mastery."""
+        t = float(theta)
+        if 0.0 <= t <= 1.0:
+            return t
+        exponent = max(-500.0, min(500.0, -1.7 * t))
+        return 1.0 / (1.0 + math.exp(exponent))
+
+    def personalized_graph_walk(
+        self,
+        query: str,
+        user_context: UserContext,
+        student_id: Optional[str] = None,
+        top_k: int = 6,
+        seed_k: int = 3,
+        expansion_hops: int = 2,
+    ) -> List[Dict]:
+        """
+        Three-step personalized retrieval:
+        1) vector seed from query embedding, 2) mastery-weighted graph expansion,
+        3) top-k context assembly within RBAC scope.
+        """
+        if not query.strip():
+            return []
+
+        concepts = self.graph.get_concept_nodes()
+        visible_concepts = [c for c in concepts if RBACFilter.assert_read_permission(c, user_context)[0]]
+        if not visible_concepts:
+            return []
+
+        query_embedding = self.embedding_service.embed_text(query)
+
+        scored = []
+        for concept in visible_concepts:
+            embedding = concept.get("embedding")
+            if not embedding:
+                text = f"{concept.get('name', '')} {concept.get('description', '')}".strip()
+                embedding = self.embedding_service.embed_text(text)
+
+            vector_score = self.embedding_service.cosine_similarity(query_embedding, embedding)
+            scored.append({**concept, "vector_score": float(vector_score), "score": float(vector_score)})
+
+        scored.sort(key=lambda x: x["vector_score"], reverse=True)
+        seeds = scored[:max(1, seed_k)]
+
+        expanded: Dict[str, Dict] = {s["id"]: s for s in seeds}
+        frontier = [{"node": s, "depth": 0} for s in seeds]
+        student_key = student_id or user_context.user_id
+
+        while frontier:
+            current = frontier.pop(0)
+            node = current["node"]
+            depth = current["depth"]
+            if depth >= expansion_hops:
+                continue
+
+            neighbors = self.graph.get_related_concepts(node["id"], relations=["REQUIRES", "EXTENDS"])
+            for neighbor in neighbors:
+                if not RBACFilter.assert_read_permission(neighbor, user_context)[0]:
+                    continue
+
+                overlay = self.graph.get_student_overlay(student_key, neighbor["id"])
+                theta = float(overlay.get("theta", 0.0)) if overlay else 0.0
+                mastery = self._theta_to_mastery(theta)
+
+                relation = neighbor.get("relation", "")
+                direction = neighbor.get("direction", "")
+
+                is_foundational = (relation == "REQUIRES" and direction == "in") or (relation == "EXTENDS" and direction == "out")
+                priority = (1.0 - mastery) if is_foundational else mastery
+                hop_discount = 0.9 ** (depth + 1)
+
+                expansion_score = node.get("score", node.get("vector_score", 0.0)) * hop_discount * (0.35 + 1.15 * priority)
+                merged_score = max(float(expansion_score), expanded.get(neighbor["id"], {}).get("score", 0.0))
+
+                if neighbor["id"] not in expanded or merged_score > expanded[neighbor["id"]].get("score", 0.0):
+                    expanded[neighbor["id"]] = {
+                        **neighbor,
+                        "vector_score": float(neighbor.get("vector_score", 0.0)),
+                        "score": merged_score,
+                        "theta": theta,
+                    }
+                    frontier.append({"node": expanded[neighbor["id"]], "depth": depth + 1})
+
+        ranked = sorted(expanded.values(), key=lambda x: x.get("score", 0.0), reverse=True)
+        return ranked[:max(1, top_k)]

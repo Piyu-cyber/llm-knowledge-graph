@@ -1,8 +1,12 @@
+from backend.services.crag_grader_agent import CRAGGraderAgent
+
+
 class CRAGService:
     def __init__(self, rag_service, graph_service, llm_service):
         self.graph = graph_service
         self.llm = llm_service
         self.rag = rag_service
+        self.grader = CRAGGraderAgent(llm_service=llm_service)
 
     def retrieve(self, query):
         try:
@@ -73,7 +77,8 @@ class CRAGService:
             combined_context = self._build_context(graph_results, rag_results)
 
             # 🔹 Step 5: Relevance check (UPGRADED: scalar score)
-            score = self._safe_evaluate(refined_query, combined_context)
+            grade = self.grader.grade(refined_query, combined_context)
+            score = grade["score"]
             
             # 🔁 Step 5b: Handle low scores
             if score < 0.5:
@@ -83,7 +88,8 @@ class CRAGService:
                 rag_results = self.rag.retrieve(improved_query) or []
                 graph_results = self._filter_graph_results(improved_query, graph_results)
                 combined_context = self._build_context(graph_results, rag_results)
-                score = self._safe_evaluate(improved_query, combined_context)
+                grade = self.grader.grade(improved_query, combined_context)
+                score = grade["score"]
             
             # ⚠️ Handle different score ranges
             if score < 0.5:
