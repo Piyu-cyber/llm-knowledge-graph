@@ -15,12 +15,14 @@ from backend.services.llm_service import LLMService
 from backend.services.rag_service import RAGService
 from backend.services.crag_service import CRAGService
 from backend.services.ingestion_service import IngestionService
+from backend.services.cognitive_engine import CognitiveEngine
 from backend.auth.jwt_handler import create_access_token, verify_token, get_user_from_token
 from backend.auth.rbac import UserContext
 from backend.models.schema import (
     UserRegister, UserLogin, TokenResponse, UserResponse,
     QueryRequest, QueryResponse, ConceptCreate, ConceptResponse,
-    EnrollmentRequest, EnrollmentResponse
+    EnrollmentRequest, EnrollmentResponse,
+    InteractionRequest, InteractionResponse
 )
 
 
@@ -120,6 +122,7 @@ logging.basicConfig(level=logging.INFO)
 rag_service = RAGService()
 llm_service = LLMService()
 graph_service = GraphService()
+cognitive_engine = CognitiveEngine()
 
 ingestion_service = IngestionService(
     llm_service=llm_service,
@@ -376,6 +379,67 @@ def enrol_student(
     except Exception as e:
         logger.error(f"Enrollment error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Enrollment failed: {str(e)}")
+
+
+# 🔹 Record student interaction (protected)
+@app.post("/interaction", response_model=InteractionResponse, tags=["Learning"])
+def record_interaction(
+    interaction: InteractionRequest,
+    current_user: Dict = Depends(get_current_user)
+):
+    """
+    Record a student's interaction with a concept and update their knowledge state.
+    
+    Uses Bayesian Knowledge Tracing (IRT 2-parameter logistic model) to update:
+    - theta (knowledge state)
+    - slip (careless error probability)
+    - mastery_probability (estimated probability of mastery)
+    
+    Detects Slip events: If student has mastered all prerequisites (> 0.8) but
+    failed this attempt, classifies as Slip (careless error), not Knowledge Gap.
+    
+    Requires authentication.
+    """
+    try:
+        user_id = current_user.get("user_id")
+        concept_id = interaction.concept_id
+        
+        if not user_id or not concept_id:
+            raise HTTPException(
+                status_code=400,
+                detail="User ID and concept ID are required"
+            )
+        
+        # Record interaction and update knowledge state
+        result = cognitive_engine.update_student_overlay(
+            user_id=user_id,
+            concept_id=concept_id,
+            answered_correctly=interaction.answered_correctly,
+            difficulty=interaction.difficulty
+        )
+        
+        if result.get("status") == "error":
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("message", "Failed to record interaction")
+            )
+        
+        return InteractionResponse(
+            status=result.get("status"),
+            user_id=result.get("user_id"),
+            concept_id=result.get("concept_id"),
+            answered_correctly=result.get("answered_correctly"),
+            event_type=result.get("event_type"),
+            previous=result.get("previous"),
+            updated=result.get("updated"),
+            difficulty=result.get("difficulty")
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Interaction recording error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to record interaction: {str(e)}")
 
 
 # 🔹 Get full graph (protected)

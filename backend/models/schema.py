@@ -170,6 +170,31 @@ class EnrollmentResponse(BaseModel):
     message: str
 
 
+# ==================== Interaction Schemas ====================
+class InteractionRequest(BaseModel):
+    """Student interaction with a concept"""
+    concept_id: str = Field(..., description="Concept ID")
+    answered_correctly: bool = Field(..., description="Whether the response was correct")
+    difficulty: Optional[float] = Field(
+        None, 
+        ge=-4.0, 
+        le=4.0,
+        description="Optional explicit difficulty parameter"
+    )
+
+
+class InteractionResponse(BaseModel):
+    """Response after recording student interaction"""
+    status: str
+    user_id: str
+    concept_id: str
+    answered_correctly: bool
+    event_type: str  # "correct", "slip", or "knowledge_gap"
+    previous: dict  # {theta, slip}
+    updated: dict   # {theta, slip, mastery_probability}
+    difficulty: float
+
+
 # ==================== Error Schemas ====================
 class ErrorResponse(BaseModel):
     """Error response schema"""
