@@ -279,6 +279,96 @@ class DefenceRecord:
         }
 
 
+# ==================== Achievement Node ====================
+class Achievement:
+    """Gamification achievement badge earned by student"""
+    
+    def __init__(
+        self,
+        student_id: str,
+        achievement_type: str,
+        concept_id: Optional[str] = None,
+        module_id: Optional[str] = None,
+        earned_at: Optional[str] = None,
+        achievement_id: Optional[str] = None
+    ):
+        """
+        Args:
+            student_id: Student user ID
+            achievement_type: Badge type ("explorer" | "mastery" | "module_complete")
+            concept_id: Concept ID (for mastery badges)
+            module_id: Module ID (for explorer/module_complete badges)
+            earned_at: ISO timestamp when badge was earned
+            achievement_id: Unique achievement record ID
+        """
+        self.id = achievement_id or str(uuid.uuid4())[:12]
+        self.student_id = student_id
+        self.achievement_type = achievement_type
+        self.concept_id = concept_id
+        self.module_id = module_id
+        self.earned_at = earned_at or datetime.now().isoformat()
+        self.private = True  # Only visible to student who earned it
+    
+    def to_dict(self) -> Dict:
+        """Convert to Neo4j properties"""
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "achievement_type": self.achievement_type,
+            "concept_id": self.concept_id,
+            "module_id": self.module_id,
+            "earned_at": self.earned_at,
+            "private": self.private
+        }
+
+
+# ==================== Memory Anchor Node ====================
+class MemoryAnchor:
+    """Long-term memory of a learning session (7+ days old)"""
+    
+    def __init__(
+        self,
+        student_id: str,
+        session_date: str,
+        concepts: Optional[List[str]] = None,
+        confidence: Optional[Dict[str, float]] = None,
+        misconceptions: Optional[List[str]] = None,
+        summary_text: str = "",
+        memory_id: Optional[str] = None
+    ):
+        """
+        Args:
+            student_id: Student user ID
+            session_date: ISO date of the original session
+            concepts: List of concept IDs discussed in session
+            confidence: Dict of {concept_id: mastery_probability}
+            misconceptions: List of identified misconceptions
+            summary_text: LLM-generated summary of session
+            memory_id: Unique memory anchor ID
+        """
+        self.id = memory_id or str(uuid.uuid4())[:12]
+        self.student_id = student_id
+        self.session_date = session_date
+        self.concepts = concepts or []
+        self.confidence = confidence or {}
+        self.misconceptions = misconceptions or []
+        self.summary_text = summary_text
+        self.created_at = datetime.now().isoformat()
+    
+    def to_dict(self) -> Dict:
+        """Convert to Neo4j properties"""
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "session_date": self.session_date,
+            "summary_text": self.summary_text,
+            "created_at": self.created_at,
+            "concepts": json.dumps(self.concepts) if self.concepts else "[]",
+            "confidence": json.dumps(self.confidence) if self.confidence else "{}",
+            "misconceptions": json.dumps(self.misconceptions) if self.misconceptions else "[]"
+        }
+
+
 # ==================== Edge Definition ====================
 class GraphEdge:
     """Defines relationships between nodes"""
@@ -473,4 +563,42 @@ class CypherQueries:
             "RETURN d",
             {"record_id": record_id, "status": status, 
              "integrity_score": integrity_score, "anomalous_input": anomalous_input}
+        )
+    
+    @staticmethod
+    def create_achievement(achievement: 'Achievement') -> Tuple[str, Dict]:
+        """Create an achievement badge for a student"""
+        achievement_props = achievement.to_dict()
+        return (
+            "MATCH (student:User {id: $student_id}) "
+            "CREATE (ach:Achievement $achievement_props) "
+            "CREATE (student)-[:EARNED]->(ach) "
+            "RETURN ach",
+            {"achievement_props": achievement_props, "student_id": achievement.student_id}
+        )
+    
+    @staticmethod
+    def create_memory_anchor(memory: 'MemoryAnchor', session_id: str) -> Tuple[str, Dict]:
+        """Create a memory anchor linked to session and student"""
+        memory_props = memory.to_dict()
+        return (
+            "MATCH (student:User {id: $student_id}) "
+            "MATCH (session:Session {id: $session_id}) "
+            "CREATE (mem:MemoryAnchor $memory_props) "
+            "CREATE (student)-[:HAS_MEMORY]->(mem) "
+            "CREATE (session)-[:SUMMARIZED_TO]->(mem) "
+            "RETURN mem",
+            {"memory_props": memory_props, "student_id": memory.student_id, "session_id": session_id}
+        )
+    
+    @staticmethod
+    def link_memory_to_concepts(memory_id: str, concept_ids: List[str]) -> Tuple[str, Dict]:
+        """Link memory anchor to discussion concepts"""
+        return (
+            "MATCH (mem:MemoryAnchor {id: $memory_id}) "
+            "UNWIND $concept_ids as concept_id "
+            "MATCH (c:CONCEPT {id: concept_id}) "
+            "CREATE (mem)-[:DISCUSSED]->(c) "
+            "RETURN mem",
+            {"memory_id": memory_id, "concept_ids": concept_ids}
         )

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthCredentials
 import shutil
@@ -8,7 +8,7 @@ import bcrypt
 import jwt as pyjwt
 import logging
 from datetime import timedelta
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any
 
 from backend.services.graph_service import GraphService
 from backend.services.llm_service import LLMService
@@ -20,10 +20,14 @@ from backend.auth.jwt_handler import create_access_token, verify_token, get_user
 from backend.auth.rbac import UserContext
 from backend.models.schema import (
     UserRegister, UserLogin, TokenResponse, UserResponse,
-    QueryRequest, QueryResponse, ConceptCreate, ConceptResponse,
+    QueryRequest, QueryResponse, ChatRequest, ChatResponse,
+    ConceptCreate, ConceptResponse,
     EnrollmentRequest, EnrollmentResponse,
     InteractionRequest, InteractionResponse
 )
+from backend.agents import OmniProfGraph, AgentState
+from backend.agents.summarisation_agent import process_old_interactions_background
+from backend.agents.curriculum_agent import process_curriculum_change_background
 
 
 app = FastAPI(
@@ -135,6 +139,9 @@ crag_service = CRAGService(
     graph_service=graph_service,
     llm_service=llm_service
 )
+
+# 🔹 Initialize OmniProf multi-agent orchestration graph
+omniprof_graph = OmniProfGraph()
 
 
 # ==================== AUTHENTICATION ENDPOINTS ====================
@@ -614,3 +621,135 @@ def query_system(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# 🔹 Multi-agent chat endpoint (MAIN INTERFACE) - protected
+@app.post("/chat", response_model=ChatResponse, tags=["Chat"])
+async def chat(
+    request: ChatRequest,
+    background_tasks: BackgroundTasks,
+    current_user: Dict = Depends(get_current_user)
+):
+    """
+    Multi-agent chat endpoint with full LangGraph orchestration.
+    
+    This is the PRIMARY INTERFACE for student interactions.
+    Replaces /query endpoint with full AI agent coordination:
+    
+    Route by Intent:
+    1. academic_query → TAAgent (CRAG) → Gamification → response
+    2. submission_defence → EvaluatorAgent → Integrity → CognitiveEngine → Gamification → response + record
+    3. curriculum_change → CurriculumAgent (background task) → response
+    4. progress_check → ProgressAgent → analytics response
+    
+    Features:
+    - Multi-turn conversation with session tracking
+    - Real-time achievement tracking
+    - Background academic integrity checks
+    - Automatic curriculum propagation
+    - Knowledge state updates via BKT
+    
+    Args:
+        request: ChatRequest {message, session_id, course_id}
+        background_tasks: FastAPI background task queue
+        current_user: JWT-authenticated user
+    
+    Returns:
+        ChatResponse with orchestration results and metadata
+    """
+    try:
+        student_id = current_user.get("user_id")
+        
+        if not student_id:
+            raise HTTPException(status_code=401, detail="Student ID not found in token")
+        
+        if not request.message or not request.message.strip():
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
+        
+        if len(request.message) > 2000:
+            raise HTTPException(status_code=400, detail="Message too long (max 2000 chars)")
+        
+        # Initialize agent state
+        state = AgentState(
+            student_id=student_id,
+            session_id=request.session_id,
+            current_input=request.message,
+            messages=[],
+            active_agent="",
+            agent_history=[],
+            metadata={
+                "course_id": request.course_id,
+                "user_role": current_user.get("role"),
+                "achievements": [],
+                "background_tasks": []
+            }
+        )
+        
+        # Add message to conversation history
+        state.messages.append({
+            "role": "student",
+            "content": request.message
+        })
+        
+        # Execute LangGraph multi-agent workflow
+        logger.info(f"Chat: Executing orchestration for {student_id} in session {request.session_id}")
+        
+        result_state = omniprof_graph.invoke(state)
+        
+        # Extract response from state
+        agent_response = ""
+        if result_state.messages:
+            # Find last assistant message
+            for msg in reversed(result_state.messages):
+                if msg.get("role") == "assistant":
+                    agent_response = msg.get("content", "")
+                    break
+        
+        # Default response if no agent response generated
+        if not agent_response:
+            agent_response = f"Processing completed by {result_state.active_agent}."
+        
+        # Queue background tasks if needed
+        background_task_data = result_state.metadata.get("background_task")
+        if background_task_data:
+            if background_task_data.get("agent") == "curriculum_agent":
+                args = background_task_data.get("args", {})
+                background_tasks.add_task(
+                    process_curriculum_change_background,
+                    **args
+                )
+                logger.info("Background task queued: curriculum propagation")
+            elif background_task_data.get("agent") == "summarisation_agent":
+                background_tasks.add_task(process_old_interactions_background)
+                logger.info("Background task queued: session summarization")
+        
+        # Build response
+        response = ChatResponse(
+            response=agent_response,
+            session_id=request.session_id,
+            active_agent=result_state.active_agent,
+            metadata={
+                "intent": result_state.metadata.get("intent"),
+                "crag_score": result_state.metadata.get("crag_score"),
+                "achievements": result_state.metadata.get("achievements", []),
+                "new_achievements_count": result_state.metadata.get("new_achievements_count", 0),
+                "cognition_updates": result_state.metadata.get("cognition_updates", []),
+                "background_task_queued": bool(background_task_data)
+            },
+            message_count=len(result_state.messages),
+            error=result_state.error if result_state.error_count > 0 else None
+        )
+        
+        logger.info(f"Chat: Orchestration complete - agent={result_state.active_agent}, "
+                   f"errors={result_state.error_count}, achievements={response.metadata.get('new_achievements_count', 0)}")
+        
+        return response
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Chat orchestration error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chat processing failed: {str(e)}"
+        )

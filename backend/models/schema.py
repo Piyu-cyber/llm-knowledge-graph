@@ -136,6 +136,24 @@ class QueryResponse(BaseModel):
     response_time_ms: Optional[float] = None
 
 
+# ==================== Chat Endpoint Schemas ====================
+class ChatRequest(BaseModel):
+    """Chat request with message and session context"""
+    message: str = Field(..., min_length=1, max_length=2000)
+    session_id: str = Field(..., description="Unique session identifier")
+    course_id: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    """Chat response with agent orchestration results"""
+    response: str
+    session_id: str
+    active_agent: str
+    metadata: Optional[Dict[str, Any]] = None
+    message_count: int
+    error: Optional[str] = None
+
+
 # ==================== Concept Schemas ====================
 class ConceptCreate(BaseModel):
     """Concept creation schema"""

@@ -9,6 +9,10 @@ from backend.agents.ta_agent import TAAgent, TAAgentResponse
 from backend.agents.evaluator_agent import EvaluatorAgent
 from backend.agents.integrity_agent import IntegrityAgent, WritingFingerprint
 from backend.agents.cognitive_engine_agent import CognitiveEngineAgent
+from backend.agents.curriculum_agent import CurriculumAgent
+from backend.agents.gamification_agent import GamificationAgent, Achievement
+from backend.agents.summarisation_agent import SummarisationAgent, MemoryAnchor
+from backend.agents.graph import OmniProfGraph, get_graph_instance
 
 __all__ = [
     "AgentState",
@@ -22,4 +26,11 @@ __all__ = [
     "IntegrityAgent",
     "WritingFingerprint",
     "CognitiveEngineAgent",
+    "CurriculumAgent",
+    "GamificationAgent",
+    "Achievement",
+    "SummarisationAgent",
+    "MemoryAnchor",
+    "OmniProfGraph",
+    "get_graph_instance",
 ]
