@@ -6,7 +6,7 @@ python-pptx
 sentence-transformers
 faiss-cpu
 numpy
-neo4j
+rustworkx
 groq
 python-dotenv
 PyJWT

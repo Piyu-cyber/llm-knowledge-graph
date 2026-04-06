@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import shutil
 import os
 import tempfile
@@ -44,7 +44,7 @@ users_db: Dict[str, Dict] = {}
 
 
 # ==================== Dependency Functions ====================
-async def get_current_user(credentials: HTTPAuthCredentials = Depends(security)) -> Dict:
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict:
     """
     Verify JWT token and extract user information.
     This is used as a dependency to protect endpoints.
@@ -125,7 +125,7 @@ logging.basicConfig(level=logging.INFO)
 # 🔹 Initialize shared services
 rag_service = RAGService()
 llm_service = LLMService()
-graph_service = GraphService()
+graph_service = GraphService(graph_manager)
 cognitive_engine = CognitiveEngine()
 
 ingestion_service = IngestionService(

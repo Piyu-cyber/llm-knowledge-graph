@@ -4,7 +4,7 @@ Includes authentication, user, and data validation schemas
 """
 
 from pydantic import BaseModel, EmailStr, Field, validator
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from enum import Enum
 
 

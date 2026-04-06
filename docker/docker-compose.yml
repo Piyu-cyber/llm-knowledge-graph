@@ -1,11 +1,17 @@
 version: '3.8'
 
 services:
-  neo4j:
-    image: neo4j:5
-    container_name: omniprof_neo4j
+  # OmniProf Backend - RustWorkX graph backend
+  # NO Neo4j needed! Data persists locally as JSON
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: omniprof_backend
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "8000:8000"
     environment:
-      - NEO4J_AUTH=neo4j/password
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GRAPH_DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data

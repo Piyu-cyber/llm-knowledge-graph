@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 class GraphService:
     """High-level graph operations"""
     
-    def __init__(self):
-        self.graph = Neo4jGraphManager()
+    def __init__(self,graph_manager):
+        self.graph = graph_manager
     
     # ==================== Utility Methods ====================
     
