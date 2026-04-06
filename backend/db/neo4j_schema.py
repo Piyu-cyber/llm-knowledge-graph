@@ -369,6 +369,61 @@ class MemoryAnchor:
         }
 
 
+# ==================== Semantic Memory Node ====================
+class SemanticNode:
+    """
+    Extracted fact/concept from session summarization.
+    
+    Semantic nodes represent key learnings and facts extracted
+    during session summarization by the SummarisationAgent.
+    
+    Linked to concepts and student overlays for retrieval
+    during TA Agent context assembly.
+    """
+    
+    def __init__(
+        self,
+        student_id: str,
+        fact: str,
+        concept_id: str,
+        confidence: float = 0.8,
+        source_session_id: Optional[str] = None,
+        semantic_id: Optional[str] = None
+    ):
+        """
+        Args:
+            student_id: Student ID who learned this
+            fact: The extracted fact/insight (string)
+            concept_id: Related concept node ID
+            confidence: Confidence level 0.0-1.0
+            source_session_id: Session ID where fact was extracted
+            semantic_id: Unique semantic node ID
+        """
+        self.id = semantic_id or str(uuid.uuid4())[:12]
+        self.student_id = student_id
+        self.fact = fact
+        self.concept_id = concept_id
+        self.confidence = max(0.0, min(1.0, confidence))
+        self.source_session_id = source_session_id
+        self.created_at = datetime.now().isoformat()
+        self.last_accessed = self.created_at
+        self.access_count = 0
+    
+    def to_dict(self) -> Dict:
+        """Convert to Neo4j properties"""
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "fact": self.fact,
+            "concept_id": self.concept_id,
+            "confidence": self.confidence,
+            "source_session_id": self.source_session_id,
+            "created_at": self.created_at,
+            "last_accessed": self.last_accessed,
+            "access_count": self.access_count
+        }
+
+
 # ==================== Edge Definition ====================
 class GraphEdge:
     """Defines relationships between nodes"""
@@ -601,4 +656,30 @@ class CypherQueries:
             "CREATE (mem)-[:DISCUSSED]->(c) "
             "RETURN mem",
             {"memory_id": memory_id, "concept_ids": concept_ids}
+        )
+    
+    @staticmethod
+    def create_semantic_node(semantic: 'SemanticNode') -> Tuple[str, Dict]:
+        """Create a semantic memory node (extracted fact)"""
+        semantic_props = semantic.to_dict()
+        return (
+            "MATCH (student:User {id: $student_id}) "
+            "MATCH (concept:CONCEPT {id: $concept_id}) "
+            "CREATE (sem:SemanticNode $semantic_props) "
+            "CREATE (student)-[:LEARNED_FROM]->(sem) "
+            "CREATE (sem)-[:EXTRACTED_FROM]->(concept) "
+            "RETURN sem",
+            {"semantic_props": semantic_props, "student_id": semantic.student_id, 
+             "concept_id": semantic.concept_id}
+        )
+    
+    @staticmethod
+    def access_semantic_node(semantic_id: str) -> Tuple[str, Dict]:
+        """Update access statistics for semantic node"""
+        return (
+            "MATCH (sem:SemanticNode {id: $semantic_id}) "
+            "SET sem.last_accessed = $now, "
+            "    sem.access_count = sem.access_count + 1 "
+            "RETURN sem",
+            {"semantic_id": semantic_id, "now": datetime.now().isoformat()}
         )

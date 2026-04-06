@@ -1,9 +1,10 @@
 """
 OmniProf Summarisation Agent
-Background task for creating memory anchors from old interactions.
+Background task for creating memory anchors and semantic nodes from old interactions.
 
 Features:
 - Creates memory anchors for interactions >= 7 days old
+- Extracts facts and creates semantic memory nodes from summaries
 - Runs as FastAPI background task (non-blocking)
 - Generates LLM-based summaries of interactions
 - Links memories to concepts for future context retrieval
@@ -17,6 +18,7 @@ import json
 
 from backend.agents.state import AgentState
 from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.neo4j_schema import SemanticNode
 from backend.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
@@ -241,6 +243,15 @@ class SummarisationAgent:
             
             if memory_id:
                 logger.info(f"Memory created: {memory_id} for {student_id}")
+                
+                # Extract and create semantic nodes from summary
+                self._extract_and_create_semantic_nodes(
+                    student_id=student_id,
+                    session_id=session_id,
+                    summary_text=summary,
+                    concept_ids=concepts
+                )
+                
                 return memory_id
             
             return None
@@ -450,6 +461,152 @@ class SummarisationAgent:
         except Exception as e:
             logger.error(f"MemoryAnchor writing error: {str(e)}")
             return None
+    
+    
+    # ==================== Semantic Node Extraction ====================
+    
+    def _extract_and_create_semantic_nodes(self, 
+                                          student_id: str,
+                                          session_id: str,
+                                          summary_text: str,
+                                          concept_ids: List[str]) -> None:
+        """
+        Extract facts from summary and create semantic memory nodes.
+        
+        Uses LLM to extract key facts from the session summary,
+        then creates SemanticNode entries in Neo4j linked to concepts.
+        
+        Args:
+            student_id: Student ID
+            session_id: Session ID
+            summary_text: Generated session summary
+            concept_ids: Concepts discussed in session
+        """
+        try:
+            if not summary_text or not concept_ids:
+                return
+            
+            # Extract facts from summary via LLM
+            facts = self._extract_facts_from_summary(summary_text, concept_ids)
+            
+            if not facts:
+                logger.debug("No facts extracted from summary")
+                return
+            
+            # Create semantic nodes
+            for concept_id, fact_list in facts.items():
+                for fact in fact_list:
+                    try:
+                        semantic = SemanticNode(
+                            student_id=student_id,
+                            fact=fact,
+                            concept_id=concept_id,
+                            confidence=0.85,  # Confidence from LLM extraction
+                            source_session_id=session_id
+                        )
+                        
+                        # Write to Neo4j
+                        self._write_semantic_node(semantic)
+                        
+                    except Exception as e:
+                        logger.warning(f"Semantic node creation error: {str(e)}")
+            
+            logger.debug(f"Semantic nodes created for {student_id}: {len(facts)} concepts")
+            
+        except Exception as e:
+            logger.error(f"Semantic extraction error: {str(e)}")
+    
+    
+    def _extract_facts_from_summary(self, summary_text: str, 
+                                   concept_ids: List[str]) -> Dict[str, List[str]]:
+        """
+        Extract key facts from session summary using LLM.
+        
+        Args:
+            summary_text: Generated session summary
+            concept_ids: Concepts to extract facts for
+        
+        Returns:
+            Dict mapping concept_id to list of extracted facts
+        """
+        try:
+            # Build extraction prompt
+            prompt = (
+                f"Extract the key facts and learnings from this tutoring session summary.\n\n"
+                f"Summary: {summary_text}\n\n"
+                f"Related concepts: {', '.join(concept_ids[:5])}\n\n"
+                f"Return a JSON object mapping each concept to a list of 1-3 key facts learned:\n"
+                f'{{"concept_id_1": ["fact 1", "fact 2"], "concept_id_2": ["fact 3"]}}\n\n'
+                f"Only include facts that are explicitly mentioned in the summary."
+            )
+            
+            # Call LLM
+            response = self.llm_service.generate_response(
+                prompt=prompt,
+                system_prompt="You are an expert at extracting key facts from educational summaries. "
+                            "Return only valid JSON without markdown formatting."
+            )
+            
+            # Parse JSON response
+            if not response:
+                return {}
+            
+            facts_dict = json.loads(response)
+            return facts_dict if isinstance(facts_dict, dict) else {}
+            
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse LLM response as JSON for fact extraction")
+            return {}
+        except Exception as e:
+            logger.warning(f"Fact extraction error: {str(e)}")
+            return {}
+    
+    
+    def _write_semantic_node(self, semantic: SemanticNode) -> bool:
+        """
+        Write semantic node to Neo4j.
+        
+        Args:
+            semantic: SemanticNode instance
+        
+        Returns:
+            Success status
+        """
+        try:
+            query = (
+                "MATCH (student:User {id: $student_id}) "
+                "MATCH (concept:CONCEPT {id: $concept_id}) "
+                "CREATE (sem:SemanticNode {"
+                "  id: $semantic_id,"
+                "  fact: $fact,"
+                "  confidence: $confidence,"
+                "  source_session_id: $source_session_id,"
+                "  created_at: $created_at,"
+                "  access_count: 0"
+                "}) "
+                "CREATE (student)-[:LEARNED_FROM]->(sem) "
+                "CREATE (sem)-[:EXTRACTED_FROM]->(concept) "
+                "RETURN sem.id"
+            )
+            
+            result = self.graph_manager.db.run_query(
+                query,
+                {
+                    "student_id": semantic.student_id,
+                    "concept_id": semantic.concept_id,
+                    "semantic_id": semantic.id,
+                    "fact": semantic.fact,
+                    "confidence": semantic.confidence,
+                    "source_session_id": semantic.source_session_id,
+                    "created_at": semantic.created_at
+                }
+            )
+            
+            return bool(result)
+            
+        except Exception as e:
+            logger.error(f"Semantic node writing error: {str(e)}")
+            return False
     
     
     # ==================== Memory Retrieval ====================

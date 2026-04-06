@@ -6,12 +6,14 @@ Features:
 - Runs CRAG pipeline for knowledge retrieval
 - Adapts explanation depth based on student mastery_probability
 - Uses Socratic questioning for low-mastery concepts (< 0.4)
+- Assembles context from dual-store memory (episodic + semantic)
 - Updates student overlay after generating responses
 """
 
 import logging
 import json
 import re
+import numpy as np
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +25,7 @@ from backend.services.cognitive_engine import CognitiveEngine
 from backend.services.llm_service import LLMService
 from backend.services.rag_service import RAGService
 from backend.services.graph_service import GraphService
+from backend.services.memory_service import MemoryService
 from backend.db.neo4j_driver import Neo4jGraphManager
 
 logger = logging.getLogger(__name__)
@@ -93,6 +96,12 @@ class TAAgent:
             graph_service=self.graph_service,
             llm_service=self.llm_service
         )
+        self.memory_service = MemoryService(
+            neo4j_uri=neo4j_uri,
+            neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password,
+            rag_service=self.rag_service
+        )
         
         # Socratic questioning threshold
         self.mastery_threshold_socratic = 0.4
@@ -110,10 +119,11 @@ class TAAgent:
         1. Run CRAG loop to retrieve answer
         2. Extract concepts from response
         3. Check student mastery for each concept
-        4. Adapt explanation depth and structure
-        5. Apply Socratic questioning if needed
-        6. Update student overlay
-        7. Add response to conversation
+        4. Assemble context window from dual-store memory
+        5. Adapt explanation depth and structure
+        6. Apply Socratic questioning if needed
+        7. Update student overlay
+        8. Add response to conversation
         
         Args:
             state: Current agent state
@@ -139,33 +149,45 @@ class TAAgent:
             logger.debug(f"Retrieving mastery levels for {len(concepts)} concepts")
             mastery_data = self._get_student_mastery(state.student_id, concepts)
             
-            # Step 4: Determine explanation depth
+            # Step 4: Assemble context window from dual-store memory
+            logger.debug("Assembling context window from episodic and semantic memory")
+            context_window = self._assemble_context_window(
+                student_id=state.student_id,
+                query_text=state.current_input,
+                concept_ids=concepts,
+                crag_context=crag_result,
+                student_overlay=mastery_data,
+                session_messages=state.messages
+            )
+            
+            # Step 5: Determine explanation depth
             logger.debug("Determining explanation depth")
             explanation_depth = self._determine_explanation_depth(mastery_data)
             
-            # Step 5: Check for Socratic questioning need
+            # Step 6: Check for Socratic questioning need
             logger.debug("Checking for Socratic questioning")
             should_use_socratic, primary_concept = self._should_use_socratic(
                 state.current_input,
                 mastery_data
             )
             
-            # Step 6: Build adaptive response
-            logger.debug("Building adaptive response")
+            # Step 7: Build adaptive response
+            logger.debug("Building adaptive response with assembled context")
             ta_response = self._build_adaptive_response(
                 crag_result=crag_result,
                 concepts=concepts,
                 mastery_data=mastery_data,
                 explanation_depth=explanation_depth,
                 should_use_socratic=should_use_socratic,
-                primary_concept=primary_concept
+                primary_concept=primary_concept,
+                context_window=context_window
             )
             
-            # Step 7: Update student overlay
+            # Step 8: Update student overlay
             logger.debug("Updating student overlay")
             self._update_overlays(state.student_id, concepts)
             
-            # Step 8: Update state
+            # Step 9: Update state
             state.add_message(
                 role="assistant",
                 content=ta_response.answer,
@@ -180,7 +202,12 @@ class TAAgent:
                 metadata={
                     "explanation_depth": explanation_depth,
                     "socratic": ta_response.is_socratic,
-                    "confidence": ta_response.confidence
+                    "confidence": ta_response.confidence,
+                    "context_sources": {
+                        "session_history": context_window.get("session_messages_count", 0),
+                        "episodic_memories": context_window.get("episodic_count", 0),
+                        "memory_anchors": context_window.get("memory_anchor_count", 0)
+                    }
                 }
             )
             
@@ -236,6 +263,127 @@ class TAAgent:
                 "graph_results": [],
                 "rag_results": []
             }
+    
+    
+    # ==================== Context Assembly (Dual-Store Memory) ====================
+    
+    def _assemble_context_window(self,
+                                student_id: str,
+                                query_text: str,
+                                concept_ids: List[str],
+                                crag_context: Dict,
+                                student_overlay: Dict[str, float],
+                                session_messages: List[Dict]) -> Dict:
+        """
+        Assemble complete context window from dual-store memory.
+        
+        Priority order:
+        1. Current session full message history
+        2. Top-3 episodic memory records (decay-weighted)
+        3. Memory anchors for matching concept nodes
+        4. Graph RAG context (CRAG output)
+        5. Student IRT overlay summary (theta + mastery_probability)
+        
+        Args:
+            student_id: Student ID
+            query_text: Current query text
+            concept_ids: Concepts active in current query
+            crag_context: Context from CRAG retrieval
+            student_overlay: Student's mastery data
+            session_messages: Current session conversation history
+        
+        Returns:
+            Assembled context dict with all components prioritized
+        """
+        try:
+            # Generate embedding for query if possible
+            query_embedding = None
+            try:
+                embeddings = self.rag_service.get_embeddings([query_text])
+                if embeddings:
+                    query_embedding = np.array(embeddings[0], dtype=np.float32)
+            except Exception as e:
+                logger.debug(f"Could not generate query embedding: {str(e)}")
+            
+            # Assemble context using memory service
+            context_window = self.memory_service.assemble_context_window(
+                student_id=student_id,
+                session_messages=session_messages,
+                query_embedding=query_embedding,
+                current_concept_ids=concept_ids,
+                crag_context=crag_context,
+                student_overlay=student_overlay
+            )
+            
+            logger.debug(f"Context assembled with {context_window.get('episodic_count', 0)} "
+                        f"episodic + {context_window.get('memory_anchor_count', 0)} anchor memories")
+            
+            return context_window
+            
+        except Exception as e:
+            logger.error(f"Context assembly error: {str(e)}")
+            # Return minimal context on error
+            return {
+                "session_history": session_messages,
+                "session_messages_count": len(session_messages),
+                "episodic_memories": [],
+                "episodic_count": 0,
+                "memory_anchors": [],
+                "memory_anchor_count": 0,
+                "error": str(e)
+            }
+    
+    
+    def _enhance_answer_with_episodic_context(self, 
+                                             base_answer: str,
+                                             episodic_memories: List[Dict]) -> str:
+        """
+        Enhance answer by incorporating relevant episodic memories.
+        
+        Uses the top episodic memories to add personalized context
+        and reference to student's past learning.
+        
+        Args:
+            base_answer: Base answer from CRAG
+            episodic_memories: Top episodic memory records (decay-weighted)
+        
+        Returns:
+            Enhanced answer incorporating episodic context
+        """
+        try:
+            if not episodic_memories:
+                return base_answer
+            
+            # Build context injection from episodic memories
+            memory_context = "Based on your previous interactions:\n"
+            for i, memory in enumerate(episodic_memories[:2]):  # Top 2 memories
+                score = memory.get("final_score", 0.0)
+                concepts = memory.get("concepts", [])
+                
+                if score > 0.5:  # Only include high-relevance memories
+                    memory_context += f"- You previously discussed {', '.join(concepts[:2])}\n"
+            
+            # Craft enhancement prompt
+            enhancement_prompt = (
+                f"Given this base answer and the student's relevant past interactions, "
+                f"enhance the answer to make it more personalized and contextual:\n\n"
+                f"Base Answer: {base_answer}\n\n"
+                f"Student Context:\n{memory_context}\n\n"
+                f"Provide an enhanced answer that references the student's learning journey "
+                f"where appropriate. Keep the core information but add personal touches."
+            )
+            
+            enhanced = self.llm_service.generate_response(
+                prompt=enhancement_prompt,
+                system_prompt="You are a personalized tutoring assistant. "
+                            "Enhance answers by incorporating student's past learning context."
+            )
+            
+            return enhanced if enhanced else base_answer
+            
+        except Exception as e:
+            logger.warning(f"Answer enhancement error: {str(e)}")
+            return base_answer
     
     
     # ==================== Concept Extraction ====================
@@ -413,7 +561,8 @@ Return ONLY the JSON, no other text.
                                  mastery_data: Dict[str, float],
                                  explanation_depth: str,
                                  should_use_socratic: bool,
-                                 primary_concept: Optional[str]) -> TAAgentResponse:
+                                 primary_concept: Optional[str],
+                                 context_window: Optional[Dict] = None) -> TAAgentResponse:
         """
         Build adaptive response with appropriate depth and structure.
         
@@ -427,6 +576,13 @@ Return ONLY the JSON, no other text.
         - Guide student toward understanding
         - Hint at key concepts
         
+        Context Assembly Priority:
+        1. Current session full message history
+        2. Top-3 episodic memory records (decay-weighted)
+        3. Memory anchors for matching concept nodes
+        4. Graph RAG context (CRAG output)
+        5. Student IRT overlay summary
+        
         Args:
             crag_result: CRAG pipeline output
             concepts: Extracted concepts
@@ -434,6 +590,7 @@ Return ONLY the JSON, no other text.
             explanation_depth: "basic" | "intermediate" | "advanced"
             should_use_socratic: Whether to use Socratic method
             primary_concept: Main concept if Socratic
+            context_window: Assembled context from dual-store memory
         
         Returns:
             TAAgentResponse with structured output
@@ -442,16 +599,25 @@ Return ONLY the JSON, no other text.
             base_answer = crag_result.get("answer", "")
             confidence = crag_result.get("confidence", 0.5)
             
+            # Enhance answer with context window if available
+            if context_window and context_window.get("episodic_memories"):
+                enhanced_answer = self._enhance_answer_with_episodic_context(
+                    base_answer,
+                    context_window.get("episodic_memories", [])
+                )
+            else:
+                enhanced_answer = base_answer
+            
             # Adapt explanation based on depth
             if explanation_depth == "basic":
-                adapted_answer = self._simplify_explanation(base_answer)
+                adapted_answer = self._simplify_explanation(enhanced_answer)
             elif explanation_depth == "advanced":
                 adapted_answer = self._deepen_explanation(
-                    base_answer,
+                    enhanced_answer,
                     crag_result.get("graph_results", [])
                 )
             else:
-                adapted_answer = base_answer
+                adapted_answer = enhanced_answer
             
             # Apply Socratic approach if needed
             socratic_question = None
