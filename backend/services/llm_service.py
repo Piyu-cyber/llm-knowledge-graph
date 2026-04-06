@@ -191,26 +191,66 @@ TEXT:
         return {"nodes": nodes, "edges": edges}
 
     def evaluate_relevance(self, query, context):
+        """
+        Evaluate relevance of context to query.
+        
+        Returns scalar score 0.0-1.0 instead of GOOD/BAD.
+        
+        Args:
+            query: User's question
+            context: Candidate context to evaluate
+        
+        Returns:
+            Relevance score 0.0-1.0 where:
+            - 1.0 = directly relevant
+            - 0.7 = somewhat relevant
+            - 0.5 = marginally relevant
+            - 0.0 = completely irrelevant
+        """
         prompt = f"""
 Query: {query}
 
 Context:
 {context[:1500]}
 
-Is the context directly relevant to the SAME meaning of the query?
+Rate how directly relevant this context is to answering the query.
 
-Respond ONLY with:
-GOOD or BAD
+Consider:
+1. Does it address the query's main topic?
+2. Is it from course material?
+3. Does it contain factual information?
+
+Respond with ONLY a JSON object:
+{{"score": <float between 0.0 and 1.0>}}
+
+Scoring:
+- 0.9-1.0: Directly addresses the query with course material
+- 0.7-0.9: Highly relevant, some supporting material
+- 0.5-0.7: Somewhat relevant, tangentially related
+- 0.3-0.5: Marginally relevant, mostly off-topic
+- 0.0-0.3: Completely irrelevant
 """
 
         content = self._call_llm(prompt, temperature=0)
 
-        if not content:
-            return "BAD"
-
-        decision = content.strip().upper()
-
-        return "GOOD" if "GOOD" in decision else "BAD"
+        try:
+            import json, re
+            match = re.search(r'\{.*\}', content or "", re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                score = float(data.get("score", 0.5))
+                return max(0.0, min(1.0, score))
+        except Exception as e:
+            import logging
+            logging.debug(f"Relevance score parsing error: {e}")
+        
+        # Fallback: check for keywords if parsing failed
+        if content and any(w in content.upper() for w in ["RELEVANT", "EXCELLENT", "GOOD", "HIGH"]):
+            return 0.8
+        elif content and any(w in content.upper() for w in ["SOMEWHAT", "PARTIAL", "MEDIUM"]):
+            return 0.6
+        else:
+            return 0.3
 
     # 🔥 3. ANSWER GENERATION (ANTI-HALLUCINATION)
     def generate_answer(self, query, context):

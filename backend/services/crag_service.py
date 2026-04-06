@@ -72,61 +72,79 @@ class CRAGService:
             # 🔹 Step 4: Context
             combined_context = self._build_context(graph_results, rag_results)
 
-            # 🔹 Step 5: Relevance check
-            decision = self._safe_evaluate(refined_query, combined_context)
-
-            # 🔁 Step 6: Retry if BAD
-            if decision == "BAD":
+            # 🔹 Step 5: Relevance check (UPGRADED: scalar score)
+            score = self._safe_evaluate(refined_query, combined_context)
+            
+            # 🔁 Step 5b: Handle low scores
+            if score < 0.5:
+                # Try refinement for low confidence
                 improved_query = self._refine_query(refined_query)
-
                 graph_results = self.graph.search_concepts(improved_query) or []
                 rag_results = self.rag.retrieve(improved_query) or []
-
                 graph_results = self._filter_graph_results(improved_query, graph_results)
-
                 combined_context = self._build_context(graph_results, rag_results)
-
-                decision = self._safe_evaluate(improved_query, combined_context)
-
-                if decision == "BAD":
-                    return {
-                        "query": query,
-                        "graph_results": [],
-                        "rag_results": [],
-                        "answer": "Context not relevant to query.",
-                        "confidence": 0.0
-                    }
-
-            # ⚠️ Fallback if nothing retrieved
-            if not graph_results and not rag_results:
+                score = self._safe_evaluate(improved_query, combined_context)
+            
+            # ⚠️ Handle different score ranges
+            if score < 0.5:
+                # Very low confidence: add disclaimer, generate from base knowledge
+                answer = self.llm.generate_answer(query, combined_context)
+                answer_with_disclaimer = (
+                    f"{answer}\n\n"
+                    f"⚠️ Note: This answer draws on general knowledge, not course material. "
+                    f"Please consult course documents for authoritative information."
+                )
+                
                 return {
                     "query": query,
                     "graph_results": [],
                     "rag_results": [],
-                    "answer": "No relevant information found.",
-                    "confidence": 0.1
+                    "answer": answer_with_disclaimer,
+                    "confidence": score,
+                    "grading_score": score
                 }
+            
+            elif 0.5 <= score <= 0.7:
+                # Medium confidence: ask clarifying question instead of answering directly
+                clarifying_question = self._generate_clarifying_question(
+                    query,
+                    combined_context
+                )
+                
+                return {
+                    "query": query,
+                    "graph_results": graph_results,
+                    "rag_results": rag_results,
+                    "answer": clarifying_question,
+                    "confidence": score,
+                    "grading_score": score,
+                    "type": "clarifying_question"
+                }
+            
+            else:
+                # High confidence (> 0.7): proceed normally with answer generation
+                
+                # ⚠️ Fallback if nothing retrieved
+                if not graph_results and not rag_results:
+                    return {
+                        "query": query,
+                        "graph_results": [],
+                        "rag_results": [],
+                        "answer": "No relevant information found.",
+                        "confidence": score
+                    }
 
-            # 🔹 Step 7: Generate answer
-            answer = self.llm.generate_answer(query, combined_context)
+                # 🔹 Step 7: Generate answer
+                answer = self.llm.generate_answer(query, combined_context)
 
-            # 🔹 Step 8: Confidence scoring
-            confidence = self._compute_confidence(
-                refined_query,
-                graph_results,
-                rag_results,
-                decision,
-                query,
-                is_ambiguous
-            )
-
-            return {
-                "query": query,
-                "graph_results": graph_results,
-                "rag_results": rag_results,
-                "answer": answer,
-                "confidence": confidence
-            }
+                return {
+                    "query": query,
+                    "graph_results": graph_results,
+                    "rag_results": rag_results,
+                    "answer": answer,
+                    "confidence": score,
+                    "grading_score": score
+                }
 
         except Exception as e:
             return {
@@ -179,13 +197,55 @@ Give 2 meanings as JSON list.
                 pass
         return ["General meaning", "Technical meaning"]
 
-    # 🔥 SAFE EVALUATION (FIXED)
+    # 🔥 SAFE EVALUATION (UPGRADED: returns scalar score 0.0-1.0)
     def _safe_evaluate(self, query, context):
+        """
+        Evaluate relevance of context to query.
+        
+        Returns:
+            score: float 0.0-1.0 where:
+            - > 0.7: High confidence, proceed with answer
+            - 0.5-0.7: Medium confidence, ask clarifying question
+            - < 0.5: Low confidence, add disclaimer
+        """
         try:
-            return self.llm.evaluate_relevance(query, context)
+            score = self.llm.evaluate_relevance(query, context)
+            return float(score) if isinstance(score, (int, float)) else 0.5
         except Exception as e:
             print("⚠️ Evaluation failed:", e)
-            return "BAD"
+            return 0.3  # Return low score on error
+    
+    # 🔥 CLARIFYING QUESTION GENERATION (NEW)
+    def _generate_clarifying_question(self, query, context):
+        """
+        Generate a clarifying question when confidence is medium (0.5-0.7).
+        
+        This helps the system understand the student's intent better
+        before generating a full answer.
+        
+        Args:
+            query: Original query
+            context: Available context
+        
+        Returns:
+            Clarifying question string
+        """
+        prompt = f"""
+The student asked: {query}
+
+We have some relevant material but need clarification.
+
+Generate ONE clarifying question to better understand their intent.
+The question should:
+- Be brief (1 sentence)
+- Ask them to clarify a specific aspect
+- Help us provide better information
+
+Question:
+"""
+        
+        question = self.llm._call_llm(prompt, temperature=0.5)
+        return question if question else f"Could you clarify what aspect of {query} you're most interested in?"
 
     # 🔥 QUERY REFINEMENT (FIXED)
     def _refine_query(self, query):

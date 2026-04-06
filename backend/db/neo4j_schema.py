@@ -5,6 +5,8 @@ Plus prerequisite relationships, student overlays, and validation
 """
 
 import uuid
+import json
+from datetime import datetime
 from enum import Enum
 from typing import List, Dict, Optional, Tuple
 from abc import ABC, abstractmethod
@@ -220,6 +222,63 @@ class StudentOverlay(GraphNode):
         }
 
 
+# ==================== Defence Record ====================
+class DefenceRecord:
+    """Records a student's submission defence evaluation"""
+    
+    def __init__(
+        self,
+        student_id: str,
+        submission_id: str,
+        transcript: List[Dict[str, str]],
+        ai_recommended_grade: float,
+        ai_feedback: str,
+        integrity_score: float = 0.0,
+        status: str = "pending_review",
+        anomalous_input: bool = False,
+        record_id: Optional[str] = None
+    ):
+        """
+        Args:
+            student_id: Student user ID
+            submission_id: Submission/assignment ID
+            transcript: List of turn dicts {"role": "student"|"evaluator", "content": "..."}
+            ai_recommended_grade: Score 0.0-1.0
+            ai_feedback: Detailed feedback text
+            integrity_score: Score 0.0-1.0 from Integrity Agent
+            status: "pending_review" | "approved" | "flagged"
+            anomalous_input: Whether writing style is anomalous
+            record_id: Optional unique record ID
+        """
+        self.id = record_id or str(uuid.uuid4())[:12]
+        self.student_id = student_id
+        self.submission_id = submission_id
+        self.transcript = transcript
+        self.ai_recommended_grade = max(0.0, min(1.0, ai_recommended_grade))
+        self.ai_feedback = ai_feedback
+        self.integrity_score = max(0.0, min(1.0, integrity_score))
+        self.status = status
+        self.anomalous_input = anomalous_input
+        self.created_at = datetime.now().isoformat() if hasattr(datetime, 'now') else ""
+        self.turn_count = len(transcript)
+    
+    def to_dict(self) -> Dict:
+        """Convert to Neo4j properties"""
+        return {
+            "id": self.id,
+            "student_id": self.student_id,
+            "submission_id": self.submission_id,
+            "ai_recommended_grade": self.ai_recommended_grade,
+            "ai_feedback": self.ai_feedback,
+            "integrity_score": self.integrity_score,
+            "status": self.status,
+            "anomalous_input": self.anomalous_input,
+            "turn_count": self.turn_count,
+            "created_at": self.created_at,
+            "transcript": json.dumps(self.transcript) if hasattr(json, 'dumps') else str(self.transcript)
+        }
+
+
 # ==================== Edge Definition ====================
 class GraphEdge:
     """Defines relationships between nodes"""
@@ -390,4 +449,28 @@ class CypherQueries:
             "SET s.mastery_probability = $mastery "
             "RETURN s",
             {"user_id": user_id, "concept_id": concept_id, "mastery": mastery}
+        )
+    
+    @staticmethod
+    def create_defence_record(record: 'DefenceRecord') -> Tuple[str, Dict]:
+        """Create a submission defence evaluation record"""
+        record_props = record.to_dict()
+        return (
+            "CREATE (d:DefenceRecord $record_props) "
+            "RETURN d",
+            {"record_props": record_props}
+        )
+    
+    @staticmethod
+    def update_defence_record(record_id: str, status: str, integrity_score: float, 
+                            anomalous_input: bool) -> Tuple[str, Dict]:
+        """Update defence record with evaluation results"""
+        return (
+            "MATCH (d:DefenceRecord {id: $record_id}) "
+            "SET d.status = $status, "
+            "    d.integrity_score = $integrity_score, "
+            "    d.anomalous_input = $anomalous_input "
+            "RETURN d",
+            {"record_id": record_id, "status": status, 
+             "integrity_score": integrity_score, "anomalous_input": anomalous_input}
         )
