@@ -10,11 +10,12 @@ Features:
 """
 
 import logging
+import os
 import asyncio
 from typing import Dict, List, Optional
 from datetime import datetime
 
-from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.graph_manager import GraphManager
 from backend.services.graph_service import GraphService
 
 logger = logging.getLogger(__name__)
@@ -39,26 +40,20 @@ class CurriculumAgent:
     Runs as background task to avoid blocking professor's update.
     """
     
-    def __init__(self, neo4j_uri: Optional[str] = None,
-                 neo4j_user: Optional[str] = None,
-                 neo4j_password: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None):
         """
         Initialize Curriculum Agent.
         
         Args:
-            neo4j_uri: Neo4j database URI
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
+            data_dir: Path to data directory for graph persistence
         """
-        import os
         from dotenv import load_dotenv
         
         load_dotenv()
         
-        self.graph_manager = Neo4jGraphManager(
-            uri=neo4j_uri or os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=neo4j_user or os.getenv("NEO4J_USER", "neo4j"),
-            password=neo4j_password or os.getenv("NEO4J_PASSWORD", "password")
+        # Use GraphManager which uses RustWorkX backend
+        self.graph_manager = GraphManager(
+            data_dir=data_dir or os.getenv("DATA_DIR", "data")
         )
         
         self.graph_service = GraphService(self.graph_manager)
@@ -162,30 +157,21 @@ class CurriculumAgent:
             affected_count = 0
             
             if node_type == "CONCEPT":
-                # Create StudentOverlay for each student in course
-                for overlay in student_overlays:
-                    student_id = overlay.get("user_id")
-                    
-                    # Create StudentOverlay for new concept
-                    create_query = (
-                        "CREATE (s:StudentOverlay {"
-                        "  user_id: $student_id,"
-                        "  concept_id: $concept_id,"
-                        "  theta: 0.0,"
-                        "  slip: 0.1,"
-                        "  guess: 0.1,"
-                        "  visited: false,"
-                        "  mastery_probability: 0.5,"
-                        "  last_updated: datetime()"
-                        "}) RETURN s"
+                # Get enrolled students and create StudentOverlay for each
+                enrolled_students = self.graph_manager.get_enrolled_students(course_id)
+                
+                for student_id in enrolled_students:
+                    # Create StudentOverlay using GraphManager method
+                    # This method already handles the "if missing" case
+                    result = self.graph_manager.create_student_overlay(
+                        user_id=student_id,
+                        concept_id=node_id,
+                        theta=0.0,
+                        slip=0.1,
+                        guess=0.1,
+                        visited=False
                     )
-                    
-                    result = self.graph_manager.db.run_query(
-                        create_query,
-                        {"student_id": student_id, "concept_id": node_id}
-                    )
-                    
-                    if result:
+                    if result.get('status') == 'success':
                         affected_count += 1
                         logger.debug(f"Created StudentOverlay for {student_id}/{node_id}")
             
@@ -229,21 +215,16 @@ class CurriculumAgent:
             affected_count = 0
             
             if node_type == "CONCEPT":
-                # Remove StudentOverlay entries
-                remove_query = (
-                    "MATCH (s:StudentOverlay {concept_id: $concept_id}) "
-                    "WHERE s.user_id IN $student_ids "
-                    "DELETE s"
-                )
+                # Remove StudentOverlay entries for all enrolled students
+                enrolled_students = self.graph_manager.get_enrolled_students(course_id)
                 
-                student_ids = [o.get("user_id") for o in student_overlays]
+                for student_id in enrolled_students:
+                    # Use GraphManager method to remove overlay
+                    result = self.graph_manager.remove_student_overlay(student_id, node_id)
+                    if result.get('status') == 'success':
+                        affected_count += 1
+                        logger.debug(f"Removed StudentOverlay for {student_id}/{node_id}")
                 
-                result = self.graph_manager.db.run_query(
-                    remove_query,
-                    {"concept_id": node_id, "student_ids": student_ids}
-                )
-                
-                affected_count = len(student_ids)
                 logger.debug(f"Removed StudentOverlay entries for {node_id}")
             
             return affected_count
@@ -280,25 +261,18 @@ class CurriculumAgent:
         try:
             affected_count = 0
             
-            # Update edge weights
+            # Update edge weights using GraphManager
             edge_updates = metadata.get("edges", {})
             
             for edge_id, new_weight in edge_updates.items():
-                # Update prerequisite edge weight
-                update_query = (
-                    "MATCH (n {id: $node_id})-[r:REQUIRES]->(m) "
-                    "SET r.weight = $new_weight, r.updated_at = datetime() "
-                    "RETURN r"
+                # Add or update prerequisite edge
+                self.graph_manager.add_prerequisite(
+                    concept_id=node_id,
+                    prerequisite_id=edge_id,
+                    weight=new_weight
                 )
-                
-                result = self.graph_manager.db.run_query(
-                    update_query,
-                    {"node_id": node_id, "new_weight": new_weight}
-                )
-                
-                if result:
-                    affected_count = len(student_overlays)
-                    logger.debug(f"Updated edge weight for {node_id}")
+                affected_count = len(self.graph_manager.get_enrolled_students(course_id))
+                logger.debug(f"Updated edge weight for {node_id}")
             
             return affected_count
             
@@ -311,40 +285,23 @@ class CurriculumAgent:
     
     def _get_course_student_overlays(self, course_id: str) -> List[Dict]:
         """
-        Get all StudentOverlay nodes for a course.
+        Get all enrolled students for a course.
         
-        Queries for all students enrolled in the course who have
-        StudentOverlay entries.
+        Returns list of student dicts for easy iteration
+        in change handlers.
         
         Args:
             course_id: Course ID
         
         Returns:
-            List of StudentOverlay dicts
+            List of dicts with student_id (user_id)
         """
         try:
-            query = (
-                "MATCH (course:COURSE {id: $course_id}) "
-                "MATCH (course)-[:CONTAINS]->(concept:CONCEPT) "
-                "MATCH (s:StudentOverlay {concept_id: concept.id}) "
-                "RETURN DISTINCT s.user_id as user_id, s.concept_id as concept_id"
-            )
+            # Get all enrolled students in this course
+            enrolled_students = self.graph_manager.get_enrolled_students(course_id)
             
-            result = self.graph_manager.db.run_query(
-                query,
-                {"course_id": course_id}
-            )
-            
-            # Deduplicate by user_id
-            seen = set()
-            unique_overlays = []
-            for row in result:
-                user_id = row.get("user_id")
-                if user_id not in seen:
-                    seen.add(user_id)
-                    unique_overlays.append(row)
-            
-            return unique_overlays
+            # Return as list of dicts for easy access
+            return [{"user_id": student_id} for student_id in enrolled_students]
             
         except Exception as e:
             logger.warning(f"Course student overlay retrieval error: {str(e)}")

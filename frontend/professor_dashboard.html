@@ -4,141 +4,958 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OmniProf Professor Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   <style>
-    :root { --bg:#f2f7fb; --panel:#ffffff; --ink:#17202a; --accent:#005f73; --muted:#5d7184; }
-    body { margin:0; font-family:"Sora","Segoe UI",sans-serif; background:linear-gradient(140deg,#d8eff3 0%, var(--bg) 48%, #fef5df 100%); color:var(--ink); }
-    .wrap { max-width:1200px; margin:0 auto; padding:20px; display:grid; gap:14px; }
-    .card { background:var(--panel); border-radius:14px; padding:14px; border:1px solid #d2e3ef; }
-    table { width:100%; border-collapse:collapse; }
-    th,td { text-align:left; border-bottom:1px solid #e5edf3; padding:8px; font-size:13px; vertical-align:top; }
-    button { border:0; border-radius:8px; padding:8px 10px; cursor:pointer; color:#fff; background:var(--accent); }
-    button.alt { background:#6d8aa3; }
-    #graph { height:360px; border:1px solid #d7e6ef; border-radius:10px; }
-    .mono { font-family: "JetBrains Mono", monospace; font-size:12px; }
+    :root {
+      --bg: #f2f7fb;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #5d7184;
+      --accent: #005f73;
+      --accent-light: #d0e8f0;
+      --warn: #d97706;
+      --success: #059669;
+    }
+    
+    * {
+      box-sizing: border-box;
+    }
+    
+    body {
+      margin: 0;
+      font-family: "Sora", "Segoe UI", sans-serif;
+      background: linear-gradient(140deg, #d8eff3 0%, var(--bg) 48%, #fef5df 100%);
+      color: var(--ink);
+    }
+    
+    .wrap {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-height: 100vh;
+    }
+    
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px;
+      background: var(--panel);
+      border-radius: 14px;
+      border: 1px solid #d2e3ef;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+    
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+    
+    .user-badge {
+      background: var(--accent-light);
+      color: var(--accent);
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    
+    .logout-btn {
+      background: #cbd5e0;
+      color: var(--ink);
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+    
+    .logout-btn:hover {
+      background: #a0aec0;
+    }
+    
+    .tabs-container {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      background: var(--panel);
+      border-radius: 14px;
+      border: 1px solid #d2e3ef;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+    
+    .tabs-header {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid #e5edf3;
+      background: #f9fbfd;
+      padding: 0;
+    }
+    
+    .tab-button {
+      flex: 1;
+      border: none;
+      background: none;
+      color: var(--muted);
+      padding: 16px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s;
+      text-align: center;
+    }
+    
+    .tab-button:hover {
+      color: var(--accent);
+      background: #f0f5fa;
+    }
+    
+    .tab-button.active {
+      color: var(--accent);
+      border-bottom: 3px solid var(--accent);
+      background: var(--panel);
+    }
+    
+    .tabs-content {
+      padding: 20px;
+      flex: 1;
+      overflow-y: auto;
+      max-height: calc(100vh - 200px);
+    }
+    
+    .tab {
+      display: none;
+    }
+    
+    .tab.active {
+      display: block;
+    }
+    
+    .card {
+      background: var(--panel);
+      border-radius: 14px;
+      padding: 16px;
+      border: 1px solid #d2e3ef;
+      margin-bottom: 16px;
+    }
+    
+    h2, h3, h4 {
+      margin: 0 0 12px;
+    }
+    
+    h2 {
+      font-size: 18px;
+    }
+    
+    h3 {
+      font-size: 15px;
+      font-weight: 600;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    
+    th {
+      background: #f9fbfd;
+      padding: 10px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #e5edf3;
+    }
+    
+    td {
+      padding: 10px;
+      border-bottom: 1px solid #e5edf3;
+    }
+    
+    tr:hover {
+      background: #f9fbfd;
+    }
+    
+    .button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 6px;
+      margin-bottom: 6px;
+      transition: background 0.2s;
+    }
+    
+    .button:hover {
+      background: #004258;
+    }
+    
+    .button.secondary {
+      background: #cbd5e0;
+      color: var(--ink);
+    }
+    
+    .button.secondary:hover {
+      background: #a0aec0;
+    }
+    
+    .button.danger {
+      background: var(--warn);
+      color: white;
+    }
+    
+    .button.danger:hover {
+      background: #b45309;
+    }
+    
+    .button.success {
+      background: var(--success);
+      color: white;
+    }
+    
+    .button.success:hover {
+      background: #047857;
+    }
+    
+    input, textarea, select {
+      font-family: inherit;
+      font-size: 13px;
+      padding: 8px;
+      border: 1px solid #cbd5e0;
+      border-radius: 6px;
+    }
+    
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0, 95, 115, 0.1);
+    }
+    
+    .form-group {
+      margin-bottom: 12px;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 4px;
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--accent-light);
+      color: var(--accent);
+      margin-right: 4px;
+    }
+    
+    .badge.warn {
+      background: #fef3c7;
+      color: var(--warn);
+    }
+    
+    .badge.success {
+      background: #d1fae5;
+      color: var(--success);
+    }
+    
+    .chart-container {
+      position: relative;
+      height: 300px;
+      margin: 16px 0;
+    }
+    
+    #graph {
+      height: 500px;
+      border: 1px solid #cbd5e0;
+      border-radius: 10px;
+      background: white;
+    }
+    
+    .graph-editor {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 16px;
+    }
+    
+    .panel-sidebar {
+      background: #f9fbfd;
+      border: 1px solid #e5edf3;
+      border-radius: 10px;
+      padding: 16px;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+    
+    .status-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      margin-right: 6px;
+    }
+    
+    .status-indicator.warn {
+      background: var(--warn);
+    }
+    
+    .integrity-score {
+      font-weight: 600;
+      font-size: 14px;
+    }
+    
+    .integrity-score.flagged {
+      color: var(--warn);
+    }
+    
+    .queue-item {
+      background: #f9fbfd;
+      border: 1px solid #e5edf3;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    
+    .queue-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    
+    .queue-item-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    
+    .student-overlay-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }
+    
+    .overlay-card {
+      background: #f9fbfd;
+      border: 1px solid #e5edf3;
+      border-radius: 10px;
+      padding: 12px;
+    }
+    
+    .overlay-card h4 {
+      margin: 0 0 6px;
+      color: var(--accent);
+    }
+    
+    .overlay-stat {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      margin: 4px 0;
+    }
+    
+    .overlay-stat .value {
+      font-weight: 600;
+      color: var(--ink);
+    }
+    
+    @media (max-width: 1000px) {
+      .tabs-header {
+        flex-wrap: wrap;
+      }
+      
+      .tab-button {
+        flex: 1;
+        min-width: 120px;
+      }
+      
+      .graph-editor {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <section class="card">
-      <h2>HITL Queue</h2>
-      <table>
-        <thead>
-          <tr><th>Summary</th><th>AI Grade</th><th>Integrity</th><th>Actions</th></tr>
-        </thead>
-        <tbody id="queueBody"></tbody>
-      </table>
-    </section>
+    <!-- Header -->
+    <div class="header">
+      <h1>Professor Dashboard</h1>
+      <div style="display: flex; align-items: center;">
+        <span class="user-badge" id="userBadge">Loading...</span>
+        <button class="logout-btn" onclick="handleLogout()">Logout</button>
+      </div>
+    </div>
 
-    <section class="card">
-      <h2>Cohort Overview</h2>
-      <label>Course ID <input id="courseId" value="cs101" /></label>
-      <label>Inactive Days <input id="inactiveDays" type="number" value="7" min="1" /></label>
-      <button onclick="loadCohort()">Load Cohort</button>
-      <pre id="cohortOut" class="mono"></pre>
-    </section>
+    <!-- Tabs -->
+    <div class="tabs-container">
+      <div class="tabs-header">
+        <button class="tab-button active" onclick="switchTab(0)">📊 Cohort Overview</button>
+        <button class="tab-button" onclick="switchTab(1)">📋 HITL Queue</button>
+        <button class="tab-button" onclick="switchTab(2)">👤 Student Detail</button>
+        <button class="tab-button" onclick="switchTab(3)">🧬 Knowledge Graph</button>
+      </div>
 
-    <section class="card">
-      <h2>Read-only Graph</h2>
-      <div id="graph"></div>
-    </section>
+      <div class="tabs-content">
+        <!-- Tab 0: Cohort Overview -->
+        <div class="tab active">
+          <h2>Cohort Overview</h2>
+          <div class="form-group">
+            <label for="cohortCourseId">Course ID</label>
+            <select id="cohortCourseId" onchange="loadCohortData()">
+              <option value="">Select a course...</option>
+              <option value="cs101">CS 101</option>
+              <option value="cs201">CS 201</option>
+            </select>
+          </div>
 
-    <section class="card">
-      <h2>Learning Path Config</h2>
-      <p class="mono">Enter ordered concept IDs (comma-separated)</p>
-      <textarea id="orderedPath" style="width:100%;min-height:80px"></textarea>
-      <button onclick="saveLearningPath()">Save Learning Path</button>
-      <pre id="pathOut" class="mono"></pre>
-    </section>
+          <div class="chart-container">
+            <canvas id="masteryCohortChart"></canvas>
+          </div>
+
+          <h3>Students</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Student Name</th>
+                <th>Avg Mastery</th>
+                <th>Last Active</th>
+                <th>Struggling Concepts</th>
+              </tr>
+            </thead>
+            <tbody id="cohortTableBody">
+              <tr><td colspan="4" style="text-align: center; color: var(--muted);">Select a course to load data</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Tab 1: HITL Queue -->
+        <div class="tab">
+          <h2>HITL Evaluation Queue</h2>
+          <div style="margin-bottom: 16px;">
+            <button class="button" onclick="loadHITLQueue()">🔄 Refresh Queue</button>
+          </div>
+
+          <div id="queueContainer"></div>
+        </div>
+
+        <!-- Tab 2: Student Drill-Down -->
+        <div class="tab">
+          <h2>Student Detail</h2>
+          <div class="form-group">
+            <label for="studentSelect">Select Student</label>
+            <select id="studentSelect" onchange="loadStudentDetail()">
+              <option value="">Loading students...</option>
+            </select>
+          </div>
+
+          <div id="studentDetailContainer"></div>
+        </div>
+
+        <!-- Tab 3: Knowledge Graph Editor -->
+        <div class="tab">
+          <h2>Knowledge Graph Editor</h2>
+          <div style="margin-bottom: 16px; display: flex; gap: 8px;">
+            <button class="button" onclick="loadGraphVisualization()">🔄 Refresh Graph</button>
+            <button class="button success" onclick="showAddNodeForm()">➕ Add Node</button>
+            <button class="button secondary" onclick="uploadMaterial()">📤 Upload Material</button>
+          </div>
+
+          <div class="graph-editor">
+            <div id="graph"></div>
+            <div class="panel-sidebar" id="graphSidebar">
+              <p style="color: var(--muted); font-size: 12px;">Select a node to edit properties</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
     const API_BASE = localStorage.getItem("omniprof_api") || "http://127.0.0.1:8000";
-    const TOKEN = localStorage.getItem("omniprof_token") || "";
+    let TOKEN = localStorage.getItem("omniprof_token") || "";
+    let CURRENT_USER = null;
+    let cohortData = {};
+    let graphNetwork = null;
+    let selectedNode = null;
 
+    // Auth
     function authHeaders() {
-      return { "Authorization": `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+      return { "Authorization": `Bearer ${TOKEN}` };
     }
 
-    async function loadQueue() {
-      const res = await fetch(`${API_BASE}/professor/hitl-queue`, { headers: { "Authorization": `Bearer ${TOKEN}` } });
-      const data = await res.json();
-      const body = document.getElementById("queueBody");
-      body.innerHTML = "";
-      (data.items || []).forEach((row) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>
-            <div>${row.submission_summary || "-"}</div>
-            <details><summary>Transcript</summary><pre class='mono'>${JSON.stringify(row.transcript || [], null, 2)}</pre></details>
-            <div class='mono'>Feedback: ${row.ai_feedback || ""}</div>
-          </td>
-          <td>${row.ai_recommended_grade ?? "-"}<br><span class='mono'>${row.ai_grade_justification || ""}</span></td>
-          <td>${row.integrity_score ?? "-"} (n=${row.integrity_sample_size ?? 0})</td>
-          <td>
-            <button onclick='actQueue("${row.queue_id}","approve")'>Approve</button>
-            <button class='alt' onclick='actQueue("${row.queue_id}","modify_approve")'>Modify+Approve</button>
-            <button class='alt' onclick='actQueue("${row.queue_id}","reject_second_defence")'>Reject</button>
-          </td>`;
-        body.appendChild(tr);
+    function showLogin() {
+      window.location.href = "student_dashboard.html";
+    }
+
+    function handleLogout() {
+      TOKEN = "";
+      localStorage.removeItem("omniprof_token");
+      localStorage.removeItem("omniprof_user_id");
+      showLogin();
+    }
+
+    // UI
+    function switchTab(index) {
+      document.querySelectorAll(".tab").forEach((t, i) => {
+        t.classList.toggle("active", i === index);
+      });
+      document.querySelectorAll(".tab-button").forEach((b, i) => {
+        b.classList.toggle("active", i === index);
       });
     }
 
-    async function actQueue(queueId, action) {
-      const payload = { action };
-      if (action === "modify_approve") {
-        payload.modified_grade = Number(prompt("Modified grade (0-1)", "0.75"));
-        payload.modified_feedback = prompt("Modified feedback", "Needs clearer justification.");
+    // ***** TAB 0: COHORT OVERVIEW *****
+    async function loadCohortData() {
+      const courseId = document.getElementById("cohortCourseId").value;
+      if (!courseId) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/professor/cohort?course_id=${encodeURIComponent(courseId)}`, {
+          headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error("Failed to load cohort");
+        
+        const data = await res.json();
+        if (!data.students) return;
+
+        cohortData = { [courseId]: data.students };
+
+        // Populate table
+        const tbody = document.getElementById("cohortTableBody");
+        tbody.innerHTML = "";
+        (data.students || []).forEach((student) => {
+          const tr = document.createElement("tr");
+          const struggling = (student.struggling || [])
+            .map((s) => `<span class="badge warn">${s.concept_name}</span>`)
+            .join("");
+          
+          tr.innerHTML = `
+            <td><strong>${student.student_id}</strong></td>
+            <td>${(student.avg_mastery * 100).toFixed(0)}%</td>
+            <td>${student.last_active ? new Date(student.last_active).toLocaleDateString() : "-"}</td>
+            <td>${struggling || "-"}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        // Update chart (topic average mastery would come from response)
+        updateCohortChart(data.students);
+      } catch (error) {
+        console.error("Cohort load error:", error);
+        alert("Failed to load cohort data");
       }
-      await fetch(`${API_BASE}/professor/hitl-queue/${queueId}/action`, {
+    }
+
+    function updateCohortChart(students) {
+      // Aggregate mastery by topic from students
+      const topicMastery = {};
+      students.forEach((student) => {
+        (student.concepts || []).forEach((concept) => {
+          if (!topicMastery[concept.concept_name]) {
+            topicMastery[concept.concept_name] = [];
+          }
+          topicMastery[concept.concept_name].push(concept.mastery_probability);
+        });
+      });
+
+      const labels = Object.keys(topicMastery).slice(0, 10);
+      const data = labels.map((topic) => {
+        const vals = topicMastery[topic];
+        return (vals.reduce((a, b) => a + b, 0) / vals.length * 100).toFixed(0);
+      });
+
+      const ctx = document.getElementById("masteryCohortChart");
+      if (ctx.chart) ctx.chart.destroy();
+      ctx.chart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{ label: "Avg Mastery %", data, backgroundColor: "#059669" }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: "y",
+          scales: { x: { beginAtZero: true, max: 100 } },
+          plugins: { legend: { display: false } },
+        },
+      });
+    }
+
+    // ***** TAB 1: HITL QUEUE *****
+    async function loadHITLQueue() {
+      try {
+        const res = await fetch(`${API_BASE}/professor/hitl-queue`, { headers: authHeaders() });
+        if (!res.ok) throw new Error("Failed to load queue");
+        
+        const data = await res.json();
+        const container = document.getElementById("queueContainer");
+        container.innerHTML = "";
+
+        (data.items || []).forEach((record) => {
+          const item = document.createElement("div");
+          item.className = "queue-item";
+          
+          const sdiVisible = record.sdi_visible !== false;
+          const sdiFlag = record.integrity_score > 85 ? " ⚠️ FLAGGED" : "";
+          const integritySummary = sdiVisible 
+            ? `SDI: ${record.integrity_score} (n=${record.integrity_sample_size})`
+            : `Flagged (limited data)`;
+          
+          item.innerHTML = `
+            <div class="queue-item-header">
+              <div>
+                <strong>${record.student_id || "Unknown"}</strong> - ${new Date(record.submission_date).toLocaleDateString()}
+              </div>
+              <div>
+                <span class="integrity-score ${record.integrity_score > 85 ? "flagged" : ""}">
+                  ${integritySummary}${sdiFlag}
+                </span>
+              </div>
+            </div>
+            <div style="font-size: 12px; color: var(--muted); margin: 8px 0;">
+              <strong>AI Grade:</strong> ${(record.ai_recommended_grade * 100).toFixed(0)}% | 
+              <strong>Feedback:</strong> ${record.ai_feedback || ""}
+            </div>
+            <div class="queue-item-actions">
+              <button class="button success" onclick="gradeDefence('${record.record_id}', 'approve', null, null)">✅ Approve</button>
+              <button class="button secondary" onclick="editAndApprove('${record.record_id}', ${record.ai_recommended_grade})">✏️ Edit+Approve</button>
+              <button class="button danger" onclick="gradeDefence('${record.record_id}', 'reject', null, null)">❌ Reject</button>
+            </div>
+          `;
+          container.appendChild(item);
+        });
+
+        if (!data.items || data.items.length === 0) {
+          container.innerHTML = '<p style="color: var(--muted); text-align: center;">No pending evaluations</p>';
+        }
+      } catch (error) {
+        console.error("HITL queue load error:", error);
+      }
+    }
+
+    function editAndApprove(recordId, currentGrade) {
+      const newGrade = prompt("Enter grade (0-1):", currentGrade);
+      if (newGrade === null) return;
+
+      const newFeedback = prompt("Enter feedback:", "");
+      if (newFeedback === null) return;
+
+      gradeDefence(recordId, "approve", parseFloat(newGrade), newFeedback);
+    }
+
+    async function gradeDefence(recordId, action, grade, feedback) {
+      try {
+        const payload = { record_id: recordId, action };
+        if (grade !== null && grade !== undefined) {
+          payload.modified_grade = grade;
+        }
+        if (feedback) {
+          payload.modified_feedback = feedback;
+        }
+
+        const res = await fetch(`${API_BASE}/professor/grade`, {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) throw new Error("Failed to grade record");
+        alert(`Record ${action}d successfully`);
+        loadHITLQueue();
+      } catch (error) {
+        console.error("Grade error:", error);
+        alert("Failed to grade record");
+      }
+    }
+
+    // ***** TAB 2: STUDENT DETAIL *****
+    async function populateStudentSelect() {
+      try {
+        const courseId = document.getElementById("cohortCourseId").value || "cs101";
+        const res = await fetch(`${API_BASE}/professor/cohort?course_id=${encodeURIComponent(courseId)}`, {
+          headers: authHeaders(),
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const select = document.getElementById("studentSelect");
+        select.innerHTML = '<option value="">Select a student...</option>';
+
+        (data.students || []).forEach((student) => {
+          const opt = document.createElement("option");
+          opt.value = student.student_id;
+          opt.textContent = student.student_id;
+          select.appendChild(opt);
+        });
+      } catch (error) {
+        console.error("Student select error:", error);
+      }
+    }
+
+    async function loadStudentDetail() {
+      const studentId = document.getElementById("studentSelect").value;
+      if (!studentId) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/student/progress`, { headers: authHeaders() });
+        const progressRes = await fetch(`${API_BASE}/student/achievements`, { headers: authHeaders() });
+
+        if (!res.ok || !progressRes.ok) return;
+
+        const progress = await res.json();
+        const achievements = await progressRes.json();
+
+        const container = document.getElementById("studentDetailContainer");
+        container.innerHTML = `
+          <h3>Concept Overlays</h3>
+          <div class="student-overlay-grid" id="overlayGrid"></div>
+          
+          <h3>Achievements</h3>
+          <div id="achievementsDiv"></div>
+          
+          <h3>Professor Notes</h3>
+          <textarea id="annotationText" placeholder="Add private notes about this student..." style="width: 100%; min-height: 80px;"></textarea>
+          <button class="button success" onclick="saveAnnotation('${studentId}')" style="margin-top: 8px;">💾 Save Notes</button>
+        `;
+
+        // Render overlays
+        const grid = document.getElementById("overlayGrid");
+        (progress.mastery || []).forEach((concept) => {
+          const card = document.createElement("div");
+          card.className = "overlay-card";
+          card.innerHTML = `
+            <h4>${concept.concept_name}</h4>
+            <div class="overlay-stat">
+              <span>Mastery:</span>
+              <span class="value">${(concept.mastery_probability * 100).toFixed(0)}%</span>
+            </div>
+            <div class="overlay-stat">
+              <span>Confidence:</span>
+              <span class="value">${concept.confidence_band}</span>
+            </div>
+            <div class="overlay-stat">
+              <span>Visited:</span>
+              <span class="value">${concept.visited ? "✓" : "✗"}</span>
+            </div>
+          `;
+          grid.appendChild(card);
+        });
+
+        // Render achievements
+        const achDiv = document.getElementById("achievementsDiv");
+        const icons = { explorer: "🧭", mastery: "⭐", module_complete: "🏆" };
+        (achievements.achievements || []).forEach((ach) => {
+          const badge = document.createElement("span");
+          badge.className = "badge success";
+          badge.textContent = `${icons[ach.achievement_type] || "🎯"} ${ach.concept_name}`;
+          achDiv.appendChild(badge);
+        });
+      } catch (error) {
+        console.error("Student detail error:", error);
+      }
+    }
+
+    async function saveAnnotation(studentId) {
+      const annotation = document.getElementById("annotationText").value;
+      try {
+        const res = await fetch(`${API_BASE}/professor/annotate`, {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ student_id: studentId, annotation }),
+        });
+        if (!res.ok) throw new Error();
+        alert("Notes saved");
+      } catch (error) {
+        alert("Failed to save notes");
+      }
+    }
+
+    // ***** TAB 3: KNOWLEDGE GRAPH *****
+    async function loadGraphVisualization() {
+      try {
+        const res = await fetch(`${API_BASE}/graph`, { headers: authHeaders() });
+        if (!res.ok) throw new Error();
+
+        const data = await res.json();
+        const nodes = new vis.DataSet((data.nodes || []).map((n) => ({
+          id: n.id,
+          label: n.name || n.id,
+          title: n.description || "",
+          color: n.node_type === "CONCEPT" ? "#005f73" : "#d0e8f0",
+        })));
+
+        const edges = new vis.DataSet((data.edges || []).map((e) => ({
+          from: e.source,
+          to: e.target,
+          label: e.relation_type,
+        })));
+
+        const options = {
+          physics: { stabilization: true },
+          interaction: { dragNodes: true, hover: true },
+          nodes: { font: { size: 13 } },
+        };
+
+        const container = document.getElementById("graph");
+        graphNetwork = new vis.Network(container, { nodes, edges }, options);
+
+        graphNetwork.on("click", function (params) {
+          if (params.nodes.length > 0) {
+            selectedNode = params.nodes[0];
+            showNodeEditor(selectedNode);
+          }
+        });
+      } catch (error) {
+        console.error("Graph load error:", error);
+      }
+    }
+
+    function showNodeEditor(nodeId) {
+      const sidebar = document.getElementById("graphSidebar");
+      sidebar.innerHTML = `
+        <h4>Edit Node</h4>
+        <div class="form-group">
+          <label>ID</label>
+          <input type="text" value="${nodeId}" readonly style="background: #f0f0f0;" />
+        </div>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" id="nodeName" placeholder="Node name" />
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="nodeDesc" placeholder="Description" style="width: 100%; min-height: 60px;"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Visibility</label>
+          <select id="nodeVis">
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <input type="number" id="nodePrio" min="0" max="100" value="50" />
+        </div>
+        <button class="button success" onclick="saveNodeChanges('${nodeId}')" style="width: 100%; margin-top: 12px;">💾 Save</button>
+      `;
+    }
+
+    async function saveNodeChanges(nodeId) {
+      try {
+        const payload = {
+          name: document.getElementById("nodeName").value,
+          description: document.getElementById("nodeDesc").value,
+          visibility: document.getElementById("nodeVis").value,
+          priority: parseInt(document.getElementById("nodePrio").value),
+        };
+
+        const res = await fetch(`${API_BASE}/concept/${nodeId}`, {
+          method: "PATCH",
+          headers: authHeaders(),
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) throw new Error();
+        alert("Node updated");
+        loadGraphVisualization();
+      } catch (error) {
+        alert("Failed to update node");
+      }
+    }
+
+    function showAddNodeForm() {
+      const name = prompt("Concept name:");
+      if (!name) return;
+
+      const payload = {
+        name,
+        level: "CONCEPT",
+        node_type: "Concept",
+        description: prompt("Description:") || "",
+      };
+
+      fetch(`${API_BASE}/concept`, {
         method: "POST",
         headers: authHeaders(),
-        body: JSON.stringify(payload)
-      });
-      loadQueue();
-      loadCohort();
+        body: JSON.stringify(payload),
+      })
+        .then((r) => {
+          if (r.ok) {
+            alert("Concept created");
+            loadGraphVisualization();
+          }
+        })
+        .catch((e) => alert("Failed to create concept"));
     }
 
-    async function loadCohort() {
-      const course = document.getElementById("courseId").value.trim();
-      const days = Number(document.getElementById("inactiveDays").value || 7);
-      const res = await fetch(`${API_BASE}/professor/cohort-overview?course_id=${encodeURIComponent(course)}&inactivity_days=${days}`, {
-        headers: { "Authorization": `Bearer ${TOKEN}` }
-      });
-      const data = await res.json();
-      document.getElementById("cohortOut").textContent = JSON.stringify(data, null, 2);
-      await loadGraph(course);
+    function uploadMaterial() {
+      const courseId = prompt("Course ID:");
+      if (!courseId) return;
+
+      const input = document.createElement("input");
+      input.type = "file";
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        const form = new FormData();
+        form.append("file", file);
+        form.append("course_id", courseId);
+
+        try {
+          const res = await fetch(`${API_BASE}/ingest`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${TOKEN}` },
+            body: form,
+          });
+          if (res.ok) {
+            alert("Material uploaded");
+            loadGraphVisualization();
+          }
+        } catch (error) {
+          alert("Upload failed");
+        }
+      };
+      input.click();
     }
 
-    async function loadGraph(courseId) {
-      const res = await fetch(`${API_BASE}/professor/graph-visualization?course_id=${encodeURIComponent(courseId)}`, {
-        headers: { "Authorization": `Bearer ${TOKEN}` }
-      });
-      const data = await res.json();
-      const nodes = new vis.DataSet((data.nodes || []).map(n => ({ id: n.id, label: `${n.label}\n(${n.level})` })));
-      const edges = new vis.DataSet((data.edges || []).map(e => ({ from: e.source, to: e.target, label: e.relation })));
-      const container = document.getElementById("graph");
-      new vis.Network(container, { nodes, edges }, { interaction: { dragNodes: false }, physics: { stabilization: true } });
-    }
+    // Init
+    window.addEventListener("load", async () => {
+      if (!TOKEN || TOKEN.startsWith("error")) {
+        showLogin();
+        return;
+      }
 
-    async function saveLearningPath() {
-      const course = document.getElementById("courseId").value.trim();
-      const ordered = document.getElementById("orderedPath").value
-        .split(",")
-        .map(v => v.trim())
-        .filter(Boolean);
+      CURRENT_USER = {
+        user_id: localStorage.getItem("omniprof_user_id"),
+        username: localStorage.getItem("omniprof_username"),
+      };
 
-      const res = await fetch(`${API_BASE}/professor/learning-path`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({ course_id: course, ordered_concept_ids: ordered, partial_order_edges: [] })
-      });
-      const data = await res.json();
-      document.getElementById("pathOut").textContent = JSON.stringify(data, null, 2);
-    }
+      document.getElementById("userBadge").textContent = `${CURRENT_USER.username} (Professor)`;
 
-    loadQueue();
-    loadCohort();
+      populateStudentSelect();
+      loadHITLQueue();
+      loadGraphVisualization();
+    });
   </script>
 </body>
 </html>

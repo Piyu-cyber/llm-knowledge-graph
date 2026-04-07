@@ -359,12 +359,21 @@ class OmniProfGraph:
         try:
             logger.info(f"ProgressAgent: Generating analytics for {state.student_id}")
             
-            # TODO: Implement progress analytics retrieval
-            # For now, return placeholder
+            # Retrieve student learning analytics from graph
+            overlays = self.graph_manager.get_all_student_overlays(state.student_id)
+            mastered = [o for o in overlays if o.get("mastery_probability", 0) >= 0.8]
+            visited_modules = set()
+            for o in overlays:
+                node = self.graph_manager.get_concept_by_id(o.get("concept_id", ""))
+                if node:
+                    visited_modules.add(node.get("module_id", ""))
+            
             state.metadata["progress_data"] = {
-                "modules_completed": 0,
-                "concepts_mastered": 0,
-                "average_mastery": 0.0
+                "modules_explored": len(visited_modules),
+                "concepts_visited": len([o for o in overlays if o.get("visited")]),
+                "concepts_mastered": len(mastered),
+                "average_mastery": sum(o.get("mastery_probability", 0) for o in overlays) / max(1, len(overlays)),
+                "overlay_count": len(overlays)
             }
             
             state.active_agent = "progress_agent"

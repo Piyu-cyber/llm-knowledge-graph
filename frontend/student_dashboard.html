@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OmniProf Student Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     :root {
       --bg: #f4efe6;
@@ -13,165 +14,856 @@
       --accent: #0f7b6c;
       --accent-soft: #b5e6dd;
       --warn: #a14c30;
+      --green: #8dce8e;
+      --orange: #f39f5f;
     }
-    body { margin: 0; font-family: "Space Grotesk", "Segoe UI", sans-serif; background: radial-gradient(circle at 20% 20%, #fff6d6 0, var(--bg) 45%); color: var(--ink); }
-    .wrap { max-width: 1080px; margin: 0 auto; padding: 20px; display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
-    .card { background: var(--panel); border: 1px solid #e5d8c3; border-radius: 16px; padding: 16px; box-shadow: 0 8px 24px rgba(40,34,26,0.08); }
-    h1, h2 { margin: 0 0 12px; }
-    #messages { height: 360px; overflow: auto; border: 1px solid #dfcfb8; border-radius: 12px; padding: 10px; background: #fffdf9; }
-    .msg { margin: 10px 0; }
-    .meta { font-size: 12px; color: var(--muted); }
-    .assistant { background: #ecf9f6; border-left: 4px solid var(--accent); padding: 8px; border-radius: 8px; }
-    textarea, input, button { font: inherit; }
-    textarea { width: 100%; min-height: 90px; border-radius: 10px; border: 1px solid #d8c6ae; padding: 10px; }
-    button { border: 0; border-radius: 10px; background: var(--accent); color: white; padding: 10px 12px; cursor: pointer; }
-    button.secondary { background: #d8c6ae; color: #2d241a; }
-    .chip { display: inline-block; font-size: 12px; padding: 4px 8px; border-radius: 999px; background: var(--accent-soft); margin-right: 6px; }
-    .warn { color: var(--warn); font-weight: 700; }
-    .band { height: 12px; border-radius: 999px; background: #dcd4c7; overflow: hidden; }
-    .band > span { display: block; height: 100%; background: linear-gradient(90deg, #f39f5f, #8dce8e, #0f7b6c); }
-    @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+    
+    * {
+      box-sizing: border-box;
+    }
+    
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 20% 20%, #fff6d6 0, var(--bg) 45%);
+      color: var(--ink);
+    }
+    
+    .login-container {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+    
+    .login-container.show {
+      display: flex;
+    }
+    
+    .login-box {
+      background: var(--panel);
+      border: 1px solid #e5d8c3;
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 400px;
+      width: 100%;
+      box-shadow: 0 16px 48px rgba(40, 34, 26, 0.12);
+    }
+    
+    .login-box h1 {
+      margin: 0 0 24px;
+      font-size: 28px;
+    }
+    
+    .form-group {
+      margin-bottom: 16px;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    
+    .form-group input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #d8c6ae;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 14px;
+    }
+    
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 123, 108, 0.1);
+    }
+    
+    .login-error {
+      color: var(--warn);
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    
+    .login-error.show {
+      display: block;
+    }
+    
+    .dashboard {
+      display: none;
+    }
+    
+    .dashboard.show {
+      display: grid;
+    }
+    
+    .wrap {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+      min-height: 100vh;
+    }
+    
+    .card {
+      background: var(--panel);
+      border: 1px solid #e5d8c3;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(40, 34, 26, 0.08);
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e5d8c3;
+    }
+    
+    h1, h2, h3 {
+      margin: 0;
+    }
+    
+    h1 {
+      font-size: 24px;
+    }
+    
+    h2 {
+      font-size: 18px;
+    }
+    
+    h3 {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    
+    .user-badge {
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    
+    .logout-btn {
+      background: #d8c6ae;
+      color: #2d241a;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    
+    .logout-btn:hover {
+      background: #c9b59a;
+    }
+    
+    /* Chat Panel */
+    .chat-panel {
+      grid-column: 1;
+      grid-row: 1 / 3;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      margin-bottom: 16px;
+      padding: 12px;
+      background: #fffdf9;
+      border: 1px solid #dfcfb8;
+      border-radius: 12px;
+      min-height: 300px;
+    }
+    
+    .message {
+      margin-bottom: 12px;
+      animation: fadeIn 0.3s ease-in;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .message-user {
+      display: flex;
+      justify-content: flex-end;
+    }
+    
+    .message-content {
+      max-width: 85%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      word-wrap: break-word;
+    }
+    
+    .message-user .message-content {
+      background: var(--accent);
+      color: white;
+      border-bottom-right-radius: 2px;
+    }
+    
+    .message-assistant .message-content {
+      background: #ecf9f6;
+      border-left: 4px solid var(--accent);
+      border-bottom-left-radius: 2px;
+    }
+    
+    .message-meta {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      padding: 0 4px;
+    }
+    
+    .topic-badge {
+      display: inline-block;
+      background: var(--orange);
+      color: white;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+    
+    .chat-input-area {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .chat-input-group {
+      display: flex;
+      gap: 8px;
+    }
+    
+    .chat-input-group textarea {
+      flex: 1;
+      min-height: 60px;
+      padding: 10px;
+      border: 1px solid #d8c6ae;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 14px;
+      resize: none;
+    }
+    
+    .chat-input-group textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(15, 123, 108, 0.1);
+    }
+    
+    .chat-button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      height: fit-content;
+      white-space: nowrap;
+    }
+    
+    .chat-button:hover {
+      background: #0d6358;
+    }
+    
+    .chat-button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    /* Right Sidebar */
+    .right-sidebar {
+      grid-column: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    
+    /* Progress Panel */
+    .progress-panel {
+      flex: 0 1 auto;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .chart-container {
+      position: relative;
+      height: 300px;
+      margin-bottom: 12px;
+    }
+    
+    .next-concept-card {
+      background: linear-gradient(135deg, var(--accent-soft), #e8f3f0);
+      border: 1px solid var(--accent);
+      border-radius: 12px;
+      padding: 12px;
+      margin-top: 8px;
+    }
+    
+    .next-concept-card h4 {
+      margin: 0 0 4px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    
+    .next-concept-card p {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    
+    /* Achievements Panel */
+    .achievements-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    
+    .achievements-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    
+    .achievement-card {
+      background: linear-gradient(135deg, #fff9f0, #fff5e6);
+      border: 1px solid #f0e4d0;
+      border-radius: 10px;
+      padding: 12px;
+      text-align: center;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    .achievement-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(40, 34, 26, 0.1);
+    }
+    
+    .achievement-icon {
+      font-size: 28px;
+      margin-bottom: 6px;
+    }
+    
+    .achievement-type {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    
+    .achievement-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-top: 4px;
+      line-height: 1.3;
+    }
+    
+    .achievement-date {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    
+    .empty-state {
+      text-align: center;
+      padding: 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    
+    /* Responsive */
+    @media (max-width: 1000px) {
+      .wrap {
+        grid-template-columns: 1fr;
+      }
+      
+      .chat-panel {
+        grid-column: 1;
+        grid-row: 1;
+      }
+      
+      .right-sidebar {
+        grid-column: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+    }
+    
+    @media (max-width: 700px) {
+      .wrap {
+        padding: 12px;
+      }
+      
+      .right-sidebar {
+        grid-template-columns: 1fr;
+      }
+      
+      .achievements-grid {
+        grid-template-columns: 1fr;
+      }
+      
+      .login-box {
+        padding: 24px;
+      }
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <section class="card">
-      <h1>Student Dashboard</h1>
-      <p id="evalIndicator" class="warn" style="display:none;">You are being evaluated</p>
-      <div id="messages"></div>
-      <p class="meta">Active topic: <strong id="activeTopic">-</strong></p>
-      <textarea id="chatInput" placeholder="Ask your TA agent..."></textarea>
-      <div style="display:flex; gap:8px; margin-top:8px;">
-        <button onclick="sendChat()">Send</button>
-        <button class="secondary" onclick="loadProgress()">Refresh Progress</button>
-      </div>
-    </section>
+  <!-- Login Container -->
+  <div class="login-container" id="loginContainer">
+    <div class="login-box">
+      <h1>OmniProf</h1>
+      <p style="color: var(--muted); margin-bottom: 24px;">Student Learning Dashboard</p>
+      <div id="loginError" class="login-error"></div>
+      <form id="loginForm" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" required autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" required autocomplete="current-password" />
+        </div>
+        <button type="submit" style="width: 100%; background: var(--accent); color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px;">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
 
-    <aside class="card">
-      <h2>Progress View</h2>
-      <div id="overview"></div>
-      <div id="mastery"></div>
-      <hr />
-      <h2>Submission</h2>
-      <input id="submissionCourse" placeholder="course id (e.g. cs101)" />
-      <input id="submissionFile" type="file" />
-      <button style="margin-top:8px;" onclick="submitAssignment()">Upload & Enter Evaluation</button>
-      <p id="submissionStatus" class="meta"></p>
-    </aside>
+  <!-- Dashboard -->
+  <div class="dashboard" id="dashboard">
+    <div class="wrap">
+      <!-- Chat Panel (Left) -->
+      <div class="card chat-panel">
+        <div class="card-header">
+          <div>
+            <h1>Chat</h1>
+            <p style="margin: 4px 0 0; font-size: 12px; color: var(--muted);">TA Agent Tutoring</p>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <span class="user-badge" id="userBadge">loading</span>
+            <button class="logout-btn" onclick="handleLogout()">Logout</button>
+          </div>
+        </div>
+
+        <div class="messages" id="messages"></div>
+
+        <div class="chat-input-area">
+          <div class="chat-input-group">
+            <textarea id="chatInput" placeholder="Ask your TA agent..." onkeydown="handleChatKeydown(event)"></textarea>
+            <button class="chat-button" onclick="sendChat()" id="sendBtn">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Sidebar -->
+      <div class="right-sidebar">
+        <!-- Progress Panel -->
+        <div class="card progress-panel">
+          <div class="card-header">
+            <h2>Progress</h2>
+          </div>
+
+          <div style="font-size: 13px; margin-bottom: 12px;">
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+              <span style="background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;">
+                Modules: <span id="modulesCount">0</span>
+              </span>
+              <span style="background: var(--orange); color: white; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;">
+                Concepts: <span id="conceptsCount">0</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="chart-container">
+            <canvas id="masteryChart"></canvas>
+          </div>
+
+          <div class="next-concept-card">
+            <h4>Next Recommended</h4>
+            <p id="nextConcept">Loading...</p>
+          </div>
+        </div>
+
+        <!-- Achievements Panel -->
+        <div class="card achievements-panel">
+          <div class="card-header">
+            <h2>Achievements</h2>
+          </div>
+
+          <div class="achievements-grid" id="achievementsGrid">
+            <div class="empty-state">Loading achievements...</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
     const API_BASE = localStorage.getItem("omniprof_api") || "http://127.0.0.1:8000";
-    const TOKEN = localStorage.getItem("omniprof_token") || "";
-    const SESSION_ID = localStorage.getItem("omniprof_session") || "student-session";
-    let ws;
+    let TOKEN = localStorage.getItem("omniprof_token") || "";
+    let CURRENT_USER = null;
+    let ws = null;
+    let masteryChart = null;
 
+    // ===== Auth Functions =====
+    function showLogin() {
+      document.getElementById("loginContainer").classList.add("show");
+      document.getElementById("dashboard").classList.remove("show");
+    }
+
+    function showDashboard() {
+      document.getElementById("loginContainer").classList.remove("show");
+      document.getElementById("dashboard").classList.add("show");
+    }
+
+    async function handleLogin(event) {
+      event.preventDefault();
+      const username = document.getElementById("username").value;
+      const password = document.getElementById("password").value;
+
+      try {
+        const res = await fetch(`${API_BASE}/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "Login failed");
+        }
+
+        const data = await res.json();
+        TOKEN = data.access_token;
+        CURRENT_USER = {
+          user_id: data.user_id,
+          username: data.username,
+          role: data.role,
+        };
+
+        localStorage.setItem("omniprof_token", TOKEN);
+        localStorage.setItem("omniprof_user_id", data.user_id);
+        localStorage.setItem("omniprof_username", data.username);
+
+        document.getElementById("loginError").classList.remove("show");
+        document.getElementById("loginForm").reset();
+
+        showDashboard();
+        initializeDashboard();
+      } catch (error) {
+        const errorDiv = document.getElementById("loginError");
+        errorDiv.textContent = error.message;
+        errorDiv.classList.add("show");
+      }
+    }
+
+    function handleLogout() {
+      TOKEN = "";
+      CURRENT_USER = null;
+      localStorage.removeItem("omniprof_token");
+      localStorage.removeItem("omniprof_user_id");
+      localStorage.removeItem("omniprof_username");
+      if (ws) ws.close();
+      showLogin();
+    }
+
+    // ===== API Functions =====
     function authHeaders() {
       return { "Authorization": `Bearer ${TOKEN}` };
     }
 
-    function connectWs() {
-      const url = `${API_BASE.replace("http", "ws")}/ws/chat?token=${encodeURIComponent(TOKEN)}&session_id=${encodeURIComponent(SESSION_ID)}`;
-      ws = new WebSocket(url);
-      ws.onmessage = (evt) => {
-        const data = JSON.parse(evt.data);
-        if (data.active_topic_node_name) {
-          document.getElementById("activeTopic").textContent = data.active_topic_node_name;
-        }
-        if (data.evaluation_mode) {
-          document.getElementById("evalIndicator").style.display = "block";
-        }
-        if (data.event === "start") {
-          appendAssistantMessage("");
-          return;
-        }
-        if (data.event === "token") {
-          streamAssistantToken(data.token || "");
-          return;
-        }
-        if (data.event === "complete") {
-          finalizeAssistantMessage();
-        }
-      };
-    }
-
-    function appendMessage(role, text, metaText = "") {
-      const div = document.createElement("div");
-      div.className = "msg";
-      div.innerHTML = `<div><strong>${role}:</strong> ${text}</div>${metaText ? `<div class='meta'>${metaText}</div>` : ""}`;
-      document.getElementById("messages").appendChild(div);
-      document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
-    }
-
-    function appendAssistantMessage(initial) {
-      const div = document.createElement("div");
-      div.className = "msg assistant";
-      div.id = "assistant-stream";
-      div.textContent = initial;
-      document.getElementById("messages").appendChild(div);
-    }
-
-    function streamAssistantToken(tok) {
-      const target = document.getElementById("assistant-stream");
-      if (!target) return;
-      target.textContent += tok;
-      document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
-    }
-
-    function finalizeAssistantMessage() {
-      const target = document.getElementById("assistant-stream");
-      if (target) target.removeAttribute("id");
-    }
-
-    function sendChat() {
-      const text = document.getElementById("chatInput").value.trim();
-      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-      appendMessage("You", text);
-      ws.send(JSON.stringify({ message: text }));
-      document.getElementById("chatInput").value = "";
-    }
-
-    async function loadProgress() {
-      const res = await fetch(`${API_BASE}/student/progress`, { headers: authHeaders() });
-      const data = await res.json();
-      if (data.status !== "success") return;
-
-      document.getElementById("overview").innerHTML = `
-        <p><span class='chip'>Modules explored: ${data.modules_explored}</span>
-        <span class='chip'>Concepts visited: ${data.concepts_visited}</span></p>`;
-
-      const mastery = document.getElementById("mastery");
-      mastery.innerHTML = "";
-      (data.mastery || []).forEach((row) => {
-        const item = document.createElement("div");
-        const pct = Math.round((row.mastery_probability || 0) * 100);
-        item.innerHTML = `
-          <div class='meta'>${row.concept_name} (${row.confidence_band})</div>
-          <div class='band'><span style='width:${pct}%'></span></div>`;
-        mastery.appendChild(item);
-      });
-    }
-
-    async function submitAssignment() {
-      const fileInput = document.getElementById("submissionFile");
-      if (!fileInput.files.length) return;
-      const form = new FormData();
-      form.append("file", fileInput.files[0]);
-      const courseId = document.getElementById("submissionCourse").value.trim();
-      const res = await fetch(`${API_BASE}/student/submit-assignment?course_id=${encodeURIComponent(courseId)}`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: form,
-      });
-      const data = await res.json();
-      document.getElementById("submissionStatus").textContent = `${data.indicator || ""} • submission_id=${data.submission_id || "-"}`;
-      if (data.evaluation_mode) {
-        document.getElementById("evalIndicator").style.display = "block";
+    async function fetchProgress() {
+      try {
+        const res = await fetch(`${API_BASE}/student/progress`, {
+          headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error("Failed to fetch progress");
+        return await res.json();
+      } catch (error) {
+        console.error("Progress fetch error:", error);
+        return null;
       }
     }
 
-    connectWs();
-    loadProgress();
+    async function fetchAchievements() {
+      try {
+        const res = await fetch(`${API_BASE}/student/achievements`, {
+          headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error("Failed to fetch achievements");
+        return await res.json();
+      } catch (error) {
+        console.error("Achievements fetch error:", error);
+        return { achievements: [] };
+      }
+    }
+
+    // ===== WebSocket Functions =====
+    function connectWebSocket() {
+      const wsUrl = `${API_BASE.replace("http", "ws")}/ws/chat?token=${encodeURIComponent(TOKEN)}`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log("WebSocket connected");
+        document.getElementById("sendBtn").disabled = false;
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.event === "start") {
+            appendMessage("assistant", "", null);
+          } else if (data.event === "token") {
+            const token = data.token || "";
+            appendStreamToken(token);
+          } else if (data.event === "complete") {
+            finalizeMessage();
+            // Extract topic if available
+            if (data.active_topic_node_name) {
+              const topicBadge = document.createElement("div");
+              topicBadge.className = "topic-badge";
+              topicBadge.textContent = data.active_topic_node_name;
+              const lastMsg = document.querySelector(".message-assistant:last-child .message-content");
+              if (lastMsg) lastMsg.appendChild(topicBadge);
+            }
+          }
+        } catch (error) {
+          console.error("WebSocket parse error:", error);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+      };
+
+      ws.onclose = () => {
+        console.log("WebSocket disconnected");
+        document.getElementById("sendBtn").disabled = true;
+      };
+    }
+
+    // ===== Chat UI Functions =====
+    function appendMessage(role, content, topicName) {
+      const container = document.getElementById("messages");
+      const msgDiv = document.createElement("div");
+      msgDiv.className = `message message-${role}`;
+
+      const contentDiv = document.createElement("div");
+      contentDiv.className = "message-content";
+      contentDiv.textContent = content;
+
+      msgDiv.appendChild(contentDiv);
+
+      if (topicName) {
+        const badge = document.createElement("div");
+        badge.className = "topic-badge";
+        badge.textContent = topicName;
+        contentDiv.appendChild(badge);
+      }
+
+      container.appendChild(msgDiv);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function appendStreamToken(token) {
+      const container = document.getElementById("messages");
+      const lastMsg = container.querySelector(".message-assistant:last-child .message-content");
+      if (lastMsg) {
+        lastMsg.textContent += token;
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+
+    function finalizeMessage() {
+      // Message finalized
+    }
+
+    function sendChat() {
+      const input = document.getElementById("chatInput");
+      const text = input.value.trim();
+
+      if (!text || !ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn("Cannot send: empty input or WebSocket not ready");
+        return;
+      }
+
+      appendMessage("user", text);
+      ws.send(JSON.stringify({ message: text }));
+      input.value = "";
+    }
+
+    function handleChatKeydown(event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendChat();
+      }
+    }
+
+    // ===== Progress Chart =====
+    async function updateProgress() {
+      const data = await fetchProgress();
+      if (!data || !data.mastery) return;
+
+      document.getElementById("modulesCount").textContent = data.modules_explored || 0;
+      document.getElementById("conceptsCount").textContent = data.concepts_visited || 0;
+
+      // Find next concept (lowest mastery not mastered)
+      const next = data.mastery.find((m) => m.mastery_probability < 0.8);
+      if (next) {
+        document.getElementById("nextConcept").textContent = next.concept_name;
+      }
+
+      // Update chart
+      const labels = data.mastery.map((m) => m.concept_name.substring(0, 15));
+      const values = data.mastery.map((m) => (m.mastery_probability * 100).toFixed(0));
+
+      const ctx = document.getElementById("masteryChart").getContext("2d");
+      if (masteryChart) masteryChart.destroy();
+
+      masteryChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Mastery %",
+              data: values,
+              backgroundColor: data.mastery.map((m) =>
+                m.mastery_probability >= 0.8
+                  ? "#8dce8e"
+                  : m.mastery_probability >= 0.4
+                  ? "#f39f5f"
+                  : "#d8c6ae"
+              ),
+              borderRadius: 4,
+              barThickness: "60%",
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: "y",
+          scales: {
+            x: {
+              beginAtZero: true,
+              max: 100,
+              ticks: { font: { size: 11 } },
+            },
+            y: { ticks: { font: { size: 10 } } },
+          },
+          plugins: {
+            legend: { display: false },
+          },
+        },
+      });
+    }
+
+    // ===== Achievements =====
+    async function updateAchievements() {
+      const data = await fetchAchievements();
+      const grid = document.getElementById("achievementsGrid");
+
+      if (!data.achievements || data.achievements.length === 0) {
+        grid.innerHTML = '<div class="empty-state">No achievements yet. Keep learning!</div>';
+        return;
+      }
+
+      grid.innerHTML = "";
+      data.achievements.forEach((achievement) => {
+        const card = document.createElement("div");
+        card.className = "achievement-card";
+
+        const iconMap = {
+          explorer: "🧭",
+          mastery: "⭐",
+          module_complete: "🏆",
+        };
+
+        const icon = iconMap[achievement.achievement_type] || "🎯";
+        const dateStr = new Date(achievement.date_earned || Date.now()).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        });
+
+        card.innerHTML = `
+          <div class="achievement-icon">${icon}</div>
+          <div class="achievement-type">${achievement.achievement_type.replace(/_/g, " ")}</div>
+          <div class="achievement-name">${achievement.concept_name || achievement.module_name || "Achievement"}</div>
+          <div class="achievement-date">${dateStr}</div>
+        `;
+
+        grid.appendChild(card);
+      });
+    }
+
+    // ===== Initialization =====
+    async function initializeDashboard() {
+      // Set user badge
+      if (CURRENT_USER) {
+        document.getElementById("userBadge").textContent = `${CURRENT_USER.username} (${CURRENT_USER.role})`;
+      }
+
+      // Connect WebSocket
+      connectWebSocket();
+
+      // Load progress and achievements
+      await updateProgress();
+      await updateAchievements();
+
+      // Refresh progress every 30 seconds
+      setInterval(updateProgress, 30000);
+      setInterval(updateAchievements, 30000);
+    }
+
+    // ===== Startup =====
+    window.addEventListener("load", () => {
+      if (TOKEN && !TOKEN.startsWith("error")) {
+        CURRENT_USER = {
+          user_id: localStorage.getItem("omniprof_user_id"),
+          username: localStorage.getItem("omniprof_username"),
+        };
+        showDashboard();
+        initializeDashboard();
+      } else {
+        showLogin();
+      }
+    });
   </script>
 </body>
 </html>

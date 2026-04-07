@@ -10,6 +10,7 @@ Features:
 """
 
 import logging
+import os
 from typing import Dict, List, Optional
 from datetime import datetime
 
@@ -20,8 +21,8 @@ from backend.services.cognitive_engine import CognitiveEngine
 from backend.services.llm_service import LLMService
 from backend.services.rag_service import RAGService
 from backend.services.graph_service import GraphService
-from backend.db.neo4j_driver import Neo4jGraphManager
-from backend.db.neo4j_schema import DefenceRecord, CypherQueries
+from backend.db.graph_manager import GraphManager
+from backend.db.neo4j_schema import DefenceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -45,19 +46,14 @@ class EvaluatorAgent:
     
     def __init__(self,
                  groq_api_key: Optional[str] = None,
-                 neo4j_uri: Optional[str] = None,
-                 neo4j_user: Optional[str] = None,
-                 neo4j_password: Optional[str] = None):
+                 data_dir: Optional[str] = None):
         """
         Initialize Evaluator Agent.
         
         Args:
             groq_api_key: Groq API key
-            neo4j_uri: Neo4j database URI
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
+            data_dir: Path to data directory for graph persistence
         """
-        import os
         from dotenv import load_dotenv
         
         load_dotenv()
@@ -66,11 +62,9 @@ class EvaluatorAgent:
         self.client = Groq(api_key=self.groq_key) if self.groq_key else None
         self.model = "llama-3.3-70b-versatile"
         
-        # Initialize services
-        self.graph_manager = Neo4jGraphManager(
-            uri=neo4j_uri or os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=neo4j_user or os.getenv("NEO4J_USER", "neo4j"),
-            password=neo4j_password or os.getenv("NEO4J_PASSWORD", "password")
+        # Initialize services using RustWorkX-based GraphManager
+        self.graph_manager = GraphManager(
+            data_dir=data_dir or os.getenv("DATA_DIR", "data")
         )
         
         self.llm_service = LLMService()
@@ -272,26 +266,21 @@ Keep it to 2-3 sentences.
             Concept name/ID with lowest mastery
         """
         try:
-            query = """
-            MATCH (s:StudentOverlay {user_id: $user_id})
-            MATCH (s)-[:STUDIED_BY]->(c:CONCEPT)
-            RETURN c.name as name, s.mastery_probability as mastery
-            ORDER BY s.mastery_probability ASC
-            LIMIT 1
-            """
+            # Get all overlays for this student and find the least confident
+            concept_id = self.graph_manager.get_least_confident_concept(student_id)
+            if not concept_id:
+                return "key concept"
             
-            result = self.graph_manager.db.run_query(
-                query,
-                {"user_id": student_id}
-            )
+            # Get concept details
+            concept = self.graph_manager.get_concept_by_id(concept_id)
+            concept_name = concept.get('name', concept_id) if concept else concept_id
             
-            if result:
-                concept = result[0].get("name", "key concept")
-                mastery = result[0].get("mastery", 0.5)
-                logger.debug(f"Least confident concept: {concept} (mastery={mastery:.2f})")
-                return concept
+            # Get current mastery
+            overlay = self.graph_manager.get_student_overlay(student_id, concept_id)
+            mastery = overlay.get('mastery_probability', 0.5) if overlay else 0.5
             
-            return "key concept"
+            logger.debug(f"Least confident concept: {concept_name} (mastery={mastery:.2f})")
+            return concept_name
             
         except Exception as e:
             logger.warning(f"Least confident concept lookup error: {str(e)}")

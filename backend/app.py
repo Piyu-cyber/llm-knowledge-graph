@@ -21,6 +21,7 @@ from backend.services.llm_router import LLMRouter
 from backend.services.background_job_queue import BackgroundJobQueue
 from backend.services.compliance_service import ComplianceService
 from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.user_store import UserStore
 from backend.auth.jwt_handler import create_access_token, verify_token, get_user_from_token
 from backend.auth.rbac import UserContext
 from backend.models.schema import (
@@ -44,8 +45,8 @@ app = FastAPI(
 # 🔐 Security setup
 security = HTTPBearer()
 
-# 🗄️ In-memory user store (TODO: migrate to Neo4j)
-users_db: Dict[str, Dict] = {}
+# 🗄️ Persistent user store
+user_store = UserStore(data_dir="data")
 
 
 # ==================== Dependency Functions ====================
@@ -281,23 +282,22 @@ def register(user_data: UserRegister):
     """
     try:
         # Check if user already exists
-        if user_data.username in users_db:
+        if user_store.user_exists(user_data.username):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username already exists"
             )
         
         # Check email not already used
-        for user in users_db.values():
-            if user["email"] == user_data.email:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already registered"
-                )
+        if user_store.email_exists(user_data.email):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
         
         # Create user
-        user_id = f"user_{len(users_db) + 1}"
-        users_db[user_data.username] = {
+        user_id = f"user_{user_store.get_user_count() + 1}"
+        user_store.add_user(user_data.username, {
             "user_id": user_id,
             "username": user_data.username,
             "email": user_data.email,
@@ -306,7 +306,7 @@ def register(user_data: UserRegister):
             "role": user_data.role,
             "course_ids": [],
             "created_at": os.popen("date").read().strip()
-        }
+        })
         
         # Generate token
         access_token = create_access_token(
@@ -340,13 +340,12 @@ def login(credentials: UserLogin):
     """
     try:
         # Check user exists
-        if credentials.username not in users_db:
+        user = user_store.get_user_by_username(credentials.username)
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid username or password"
             )
-        
-        user = users_db[credentials.username]
         
         # Verify password
         if not verify_password(credentials.password, user["password"]):
@@ -387,17 +386,17 @@ def get_current_user_info(current_user: Dict = Depends(get_current_user)):
         user_id = current_user.get("user_id")
         
         # Find user by user_id
-        for username, user_data in users_db.items():
-            if user_data["user_id"] == user_id:
-                return UserResponse(
-                    user_id=user_data["user_id"],
-                    username=user_data["username"],
-                    email=user_data["email"],
-                    full_name=user_data.get("full_name"),
-                    role=user_data["role"],
-                    course_ids=user_data.get("course_ids", []),
-                    created_at=user_data.get("created_at")
-                )
+        user_data = user_store.get_user_by_id(user_id)
+        if user_data:
+            return UserResponse(
+                user_id=user_data["user_id"],
+                username=user_data["username"],
+                email=user_data["email"],
+                full_name=user_data.get("full_name"),
+                role=user_data["role"],
+                course_ids=user_data.get("course_ids", []),
+                created_at=user_data.get("created_at")
+            )
         
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -494,15 +493,13 @@ def enrol_student(
         # Enroll student in course asynchronously to avoid blocking on large graphs
         result = graph_service.enqueue_enrollment_overlay_init(user_id, course_id, background_tasks)
 
-        # Keep in-memory auth profile aligned with enrollment metadata.
-        for username, user_data in users_db.items():
-            if user_data.get("user_id") != user_id:
-                continue
-            current_courses = set(user_data.get("course_ids", []))
+        # Keep persistent user profile aligned with enrollment metadata.
+        user_record = user_store.get_user_by_id(user_id)
+        if user_record:
+            username = user_record.get("username")
+            current_courses = set(user_record.get("course_ids", []))
             current_courses.add(course_id)
-            user_data["course_ids"] = sorted(current_courses)
-            users_db[username] = user_data
-            break
+            user_store.update_user(username, {"course_ids": sorted(current_courses)})
         
         if result.get("status") == "error":
             raise HTTPException(
@@ -1030,6 +1027,21 @@ def get_student_progress(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/student/achievements", tags=["Student"])
+def get_student_achievements(current_user: Dict = Depends(get_current_user)):
+    """Retrieve student achievements/badges."""
+    try:
+        if current_user.get("role") not in ["student", "professor", "admin"]:
+            raise HTTPException(status_code=403, detail="Student access required")
+        
+        achievements = graph_manager.get_student_achievements(current_user.get("user_id", ""))
+        return {"status": "success", "achievements": achievements}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/student/submit-assignment", tags=["Student"])
 async def submit_assignment(
     file: UploadFile = File(...),
@@ -1349,6 +1361,268 @@ def get_learning_path(
         if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
             raise HTTPException(status_code=403, detail="Forbidden for requested course")
         return graph_manager.get_learning_path(course_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/cohort", tags=["Professor"])
+def get_professor_cohort(
+    course_id: str,
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Return per-student concept mastery summary for cohort."""
+    try:
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+        
+        compliance_service.log_access(
+            actor_user_id=current_user.get("user_id", ""),
+            actor_role=current_user.get("role", "professor"),
+            resource="professor_cohort",
+            target_user_id=None,
+        )
+        
+        # Collect student data
+        students_data = {}
+        for node_id, node in graph_manager.nodes_data.items():
+            if node.get("node_type") != "StudentOverlay":
+                continue
+            student_id = node.get("student_id")
+            concept_id = node.get("concept_id")
+            if not student_id or not concept_id:
+                continue
+            
+            concept = graph_manager.get_concept_by_id(concept_id)
+            if not concept or concept.get("course_owner") != course_id:
+                continue
+            
+            if student_id not in students_data:
+                students_data[student_id] = {
+                    "student_id": student_id,
+                    "avg_mastery": 0.0,
+                    "last_active": None,
+                    "concepts": [],
+                    "struggling": []
+                }
+            
+            mastery = float(node.get("mastery_probability", 0.0))
+            slip = float(node.get("slip", 0.1))
+            students_data[student_id]["concepts"].append({
+                "concept_id": concept_id,
+                "concept_name": concept.get("name", concept_id),
+                "mastery_probability": mastery,
+                "slip": slip
+            })
+            
+            # Track struggling concepts (highest slip)
+            if slip > 0.4:
+                students_data[student_id]["struggling"].append({
+                    "concept_name": concept.get("name", concept_id),
+                    "slip": slip
+                })
+            
+            # Track last active
+            last_updated = node.get("last_updated") or node.get("created_at")
+            if last_updated:
+                try:
+                    ts = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
+                    if students_data[student_id]["last_active"] is None or ts > students_data[student_id]["last_active"]:
+                        students_data[student_id]["last_active"] = last_updated
+                except:
+                    pass
+        
+        # Calculate averages
+        for student_id in students_data:
+            concepts = students_data[student_id]["concepts"]
+            if concepts:
+                avg_mastery = sum(c["mastery_probability"] for c in concepts) / len(concepts)
+                students_data[student_id]["avg_mastery"] = round(avg_mastery, 3)
+            
+            # Sort struggling by slip (descending)
+            students_data[student_id]["struggling"].sort(key=lambda x: x["slip"], reverse=True)
+            students_data[student_id]["struggling"] = students_data[student_id]["struggling"][:3]  # Top 3
+        
+        return {"status": "success", "students": list(students_data.values())}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/students", tags=["Professor"])
+def get_professor_students(
+    current_user: Dict = Depends(get_professor_user),
+):
+    """List all students enrolled in courses the professor teaches."""
+    try:
+        # Collect unique student IDs from StudentOverlay nodes
+        students_set = set()
+        for node_id, node in graph_manager.nodes_data.items():
+            if node.get("node_type") == "StudentOverlay":
+                student_id = node.get("student_id")
+                if student_id:
+                    students_set.add(student_id)
+        
+        # Convert to list and sort
+        students = sorted(list(students_set))
+        
+        compliance_service.log_access(
+            actor_user_id=current_user.get("user_id", ""),
+            actor_role=current_user.get("role", "professor"),
+            resource="professor_students",
+            target_user_id=None,
+        )
+        
+        return {"status": "success", "students": students}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/grade", tags=["Professor"])
+def grade_defence_record(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Approve or reject a defence record; optionally with modified grade/feedback."""
+    try:
+        record_id = payload.get("record_id")
+        action = payload.get("action")  # "approve" or "reject"
+        modified_grade = payload.get("modified_grade")
+        modified_feedback = payload.get("modified_feedback")
+        
+        if not record_id or action not in ["approve", "reject"]:
+            raise HTTPException(status_code=400, detail="Missing or invalid record_id/action")
+        
+        # Read defence records
+        defence_records = graph_manager._read_json_list(graph_manager._defence_records_path())
+        record = next((r for r in defence_records if r.get("record_id") == record_id), None)
+        
+        if not record:
+            raise HTTPException(status_code=404, detail="Record not found")
+        
+        # Update based on action
+        if action == "approve":
+            record["professor_approved"] = True
+            record["professor_grade"] = modified_grade if modified_grade is not None else record.get("ai_recommended_grade", 0.5)
+            record["professor_feedback"] = modified_feedback or record.get("ai_feedback", "")
+        elif action == "reject":
+            record["professor_approved"] = False
+            record["professor_grade"] = 0.0
+            record["professor_feedback"] = modified_feedback or "Rejected by professor"
+        
+        record["professor_id"] = current_user.get("user_id", "")
+        record["graded_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Save
+        graph_manager._write_json_list(graph_manager._defence_records_path(), defence_records)
+        
+        compliance_service.log_access(
+            actor_user_id=current_user.get("user_id", ""),
+            actor_role=current_user.get("role", "professor"),
+            resource="defence_grading",
+            target_user_id=record.get("student_id", ""),
+        )
+        
+        return {"status": "success", "record_id": record_id, "action": action}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/annotate", tags=["Professor"])
+def annotate_student(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Store professor private annotations for a student."""
+    try:
+        student_id = payload.get("student_id")
+        annotation_text = payload.get("annotation")
+        
+        if not student_id:
+            raise HTTPException(status_code=400, detail="Missing student_id")
+        
+        # Just store in a simple JSON file
+        annotations_path = os.path.join(graph_manager.data_dir, "professor_annotations.json")
+        annotations = graph_manager._read_json_list(annotations_path)
+        
+        # Remove old annotation for this student
+        annotations = [a for a in annotations if a.get("student_id") != student_id or a.get("professor_id") != current_user.get("user_id")]
+        
+        # Add new annotation
+        annotations.append({
+            "student_id": student_id,
+            "professor_id": current_user.get("user_id", ""),
+            "annotation": annotation_text or "",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        
+        graph_manager._write_json_list(annotations_path, annotations)
+        
+        compliance_service.log_access(
+            actor_user_id=current_user.get("user_id", ""),
+            actor_role=current_user.get("role", "professor"),
+            resource="student_annotation",
+            target_user_id=student_id,
+        )
+        
+        return {"status": "success", "student_id": student_id}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/concept/{concept_id}", tags=["Concepts"])
+def update_concept(
+    concept_id: str,
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Update concept metadata (name, description, visibility, priority)."""
+    try:
+        concept = graph_manager.get_concept_by_id(concept_id)
+        if not concept:
+            raise HTTPException(status_code=404, detail="Concept not found")
+        
+        # Only allow professors to update
+        if current_user.get("role") not in ["professor", "admin"]:
+            raise HTTPException(status_code=403, detail="Professor role required")
+        
+        # Update allowed fields
+        if "name" in payload:
+            concept["name"] = payload["name"]
+        if "description" in payload:
+            concept["description"] = payload["description"]
+        if "visibility" in payload:
+            concept["visibility"] = payload["visibility"]
+        if "priority" in payload:
+            concept["priority"] = payload["priority"]
+        
+        concept["last_updated"] = datetime.now(timezone.utc).isoformat()
+        
+        # Save back to graph
+        graph_manager.nodes_data[concept_id] = concept
+        graph_manager._save_graph()
+        
+        compliance_service.log_access(
+            actor_user_id=current_user.get("user_id", ""),
+            actor_role=current_user.get("role", "professor"),
+            resource="concept_update",
+            target_user_id=None,
+        )
+        
+        return {"status": "success", "concept_id": concept_id, "concept": concept}
+    
     except HTTPException:
         raise
     except Exception as e:

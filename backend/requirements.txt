@@ -4,7 +4,8 @@ python-multipart
 pypdf
 python-docx
 python-pptx
-sentence-transformers
+sentence-transformers>=2.7.0
+jina-embeddings
 faiss-cpu
 numpy
 rustworkx
@@ -21,3 +22,5 @@ httpx
 websockets
 pytest
 pytest-cov
+cerebras-cloud-sdk
+openai
