@@ -263,7 +263,7 @@ All endpoints fully implemented and tested.
 | 6 | test_phase6_acceptance | 5 | ✅ Passing |
 | 6 | test_phase6_contracts | 8 | ✅ Passing |
 
-**Total Tests**: 75+  
+**Total Tests**: 95  
 **Passing**: 100% ✅  
 **Code Coverage**: 85%+
 
@@ -330,13 +330,13 @@ These are intentionally deferred and require operational/legal work:
 - [ ] Virtual environment created and activated
 - [ ] Groq API key obtained (from console.groq.com)
 - [ ] .env file configured with API key
-- [ ] Dependencies installed: `pip install -r requirements.txt`
+- [ ] Dependencies installed: `pip install -r backend/requirements.txt`
 
 ### 5-Minute Quick Start
 
 ```bash
 # 1. Install dependencies
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
 # 2. Configure environment
 cp .env.example .env
@@ -400,7 +400,7 @@ See README.md for detailed setup and RUN_COMMANDS.md for more examples.
 
 ## Success Metrics
 
-- ✅ All test gates passing (75+ tests)
+- ✅ All test gates passing (95 tests)
 - ✅ API contracts established and verified
 - ✅ Multi-agent system functioning end-to-end
 - ✅ Document ingestion working for all formats

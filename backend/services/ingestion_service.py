@@ -314,7 +314,7 @@ class IngestionService:
         self.rag_service = rag_service
         self.graph_service = graph_service
         self.extractor = MultiFormatExtractor()
-        self.embedding_service = JinaMultimodalService(embedding_dim=2048)
+        self.embedding_service = JinaMultimodalService()
         self.review_queue_path = os.path.join("data", "review_queue.json")
         # Enable strict pre-write validation for Phase 2 acceptance/integration flows.
         self.enable_prewrite_validation = False

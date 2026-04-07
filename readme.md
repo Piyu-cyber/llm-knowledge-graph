@@ -345,9 +345,9 @@ conda activate omniprof
 
 ```bash
 # Install all dependencies (including RustWorkX)
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
-# RustWorkX is included in requirements.txt
+# RustWorkX is included in backend/requirements.txt
 # For development tools:
 pip install pytest pytest-cov black flake8
 ```
@@ -382,7 +382,7 @@ GROQ_MODEL=llama-3.3-70b-versatile
 
 # ==================== Embeddings ====================
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-EMBEDDING_DIM=384
+EMBEDDING_DIM=2048
 
 # ==================== Vector Search ====================
 MEMORY_INDEX_PATH=data/episode_memory.faiss
@@ -861,7 +861,7 @@ python -m uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
 
 # Instead of: pip install package
 # Use: python -m pip install package
-python -m pip install -r requirements.txt
+python -m pip install -r backend/requirements.txt
 ```
 
 **Solution 2: Use full path to Python executable**
@@ -986,19 +986,16 @@ gs.enroll_student("user_123", "course_123")
 #### 6. Vector Embedding Dimension Mismatch
 
 ```
-Error: Embedding dimension 768 != expected 384
+Error: Embedding dimension 768 != expected 2048
 ```
 
 **Solution:**
 ```bash
 # Check .env has correct model:
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-EMBEDDING_DIM=384
+EMBEDDING_DIM=2048
 
-# Or use different model with matching dimension
-# Popular models:
-# - all-MiniLM-L6-v2 (384-dim, faster)
-# - all-mpnet-base-v2 (768-dim, better quality)
+# The service keeps output vectors at EMBEDDING_DIM (pads/truncates if needed).
 ```
 
 #### 7. JWT Token Expired
@@ -1223,7 +1220,7 @@ To get the system running immediately:
 
 ```bash
 # 1. Install dependencies
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
 # 2. Set up environment
 cp .env.example .env
@@ -1249,7 +1246,7 @@ curl -X POST http://localhost:8000/auth/register \
 
 ```bash
 # 1. Install dependencies
-python -m pip install -r requirements.txt
+python -m pip install -r backend/requirements.txt
 
 # 2. Set up environment
 cp .env.example .env

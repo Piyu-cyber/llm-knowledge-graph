@@ -10,10 +10,10 @@ logger = logging.getLogger(__name__)
 class JinaMultimodalService:
     """Lightweight multimodal embedding service with real semantic embeddings."""
 
-    def __init__(self):
+    def __init__(self, embedding_dim: int = 2048):
         """Initialize with real embedding model or fallback."""
         self.model = None
-        self.embedding_dim = 2048
+        self.embedding_dim = embedding_dim
         self.model_name = None
         
         # Try to load Jina embeddings v3 (2048-dim)
@@ -22,7 +22,6 @@ class JinaMultimodalService:
             
             logger.info("Attempting to load jinaai/jina-embeddings-v3 model...")
             self.model = SentenceTransformer("jinaai/jina-embeddings-v3", trust_remote_code=True)
-            self.embedding_dim = 2048
             self.model_name = "jinaai/jina-embeddings-v3"
             logger.info(f"Loaded {self.model_name} ({self.embedding_dim}-dim embeddings)")
             
@@ -35,7 +34,6 @@ class JinaMultimodalService:
                 
                 logger.info("Loading fallback model: all-MiniLM-L6-v2...")
                 self.model = SentenceTransformer("all-MiniLM-L6-v2")
-                self.embedding_dim = 384
                 self.model_name = "all-MiniLM-L6-v2"
                 logger.warning(
                     "Jina model unavailable, using fallback embeddings (384-dim). "
@@ -69,6 +67,16 @@ class JinaMultimodalService:
             norm = np.linalg.norm(embedding)
             if norm > 0:
                 embedding = embedding / norm
+
+            # Keep output shape stable for downstream stores/tests.
+            if embedding.shape[0] > self.embedding_dim:
+                embedding = embedding[: self.embedding_dim]
+            elif embedding.shape[0] < self.embedding_dim:
+                embedding = np.pad(
+                    embedding,
+                    (0, self.embedding_dim - embedding.shape[0]),
+                    mode="constant",
+                )
             
             return embedding.astype(np.float32).tolist()
             

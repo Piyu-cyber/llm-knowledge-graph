@@ -257,7 +257,7 @@ A: See [README.md](README.md#api-endpoints) or start server → http://localhost
 
 **Q: "What tests exist?"**  
 A: See [PHASE_WISE_TESTING_PLAN.md](PHASE_WISE_TESTING_PLAN.md)
-- 75+ tests across 6 phases
+- 95 tests across legacy + phase suites
 - 100% passing rate
 
 **Q: "What's the architecture?"**  

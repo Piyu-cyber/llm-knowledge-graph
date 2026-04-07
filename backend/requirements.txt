@@ -5,7 +5,6 @@ pypdf
 python-docx
 python-pptx
 sentence-transformers>=2.7.0
-jina-embeddings
 faiss-cpu
 numpy
 rustworkx

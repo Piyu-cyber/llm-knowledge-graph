@@ -401,6 +401,41 @@
       color: var(--muted);
       font-size: 13px;
     }
+
+    .test-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .test-btn {
+      background: #e7f6f2;
+      color: #0f7b6c;
+      border: 1px solid #b5e6dd;
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .test-btn:hover {
+      background: #d8f0ea;
+    }
+
+    .test-output {
+      background: #fffdf9;
+      border: 1px solid #dfcfb8;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 11px;
+      max-height: 220px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+    }
     
     /* Responsive */
     @media (max-width: 1000px) {
@@ -528,6 +563,30 @@
             <div class="empty-state">Loading achievements...</div>
           </div>
         </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Feature Test Lab</h2>
+          </div>
+          <div class="form-group">
+            <label for="testCourseId">Course ID</label>
+            <input type="text" id="testCourseId" value="cs101" />
+          </div>
+          <div class="form-group">
+            <label for="testQuery">Query / Chat Prompt</label>
+            <input type="text" id="testQuery" value="Explain gradient descent briefly" />
+          </div>
+          <div class="test-grid">
+            <button class="test-btn" onclick="runFeatureTest('authMe')">GET /auth/me</button>
+            <button class="test-btn" onclick="runFeatureTest('progress')">GET /student/progress</button>
+            <button class="test-btn" onclick="runFeatureTest('achievements')">GET /student/achievements</button>
+            <button class="test-btn" onclick="runFeatureTest('query')">POST /query</button>
+            <button class="test-btn" onclick="runFeatureTest('chat')">POST /chat</button>
+            <button class="test-btn" onclick="runFeatureTest('graph')">GET /graph</button>
+            <button class="test-btn" onclick="runFeatureTest('graphView')">GET /graph-view</button>
+          </div>
+          <pre id="featureTestOutput" class="test-output">Run a test to inspect API output here.</pre>
+        </div>
       </div>
     </div>
   </div>
@@ -538,6 +597,17 @@
     let CURRENT_USER = null;
     let ws = null;
     let masteryChart = null;
+    let dashboardInitialized = false;
+    let progressIntervalId = null;
+    let achievementsIntervalId = null;
+    let wsReconnectTimer = null;
+    let shouldKeepWebSocket = true;
+    let CURRENT_SESSION_ID = localStorage.getItem("omniprof_session_id") || "";
+
+    if (!CURRENT_SESSION_ID) {
+      CURRENT_SESSION_ID = newSessionId();
+      localStorage.setItem("omniprof_session_id", CURRENT_SESSION_ID);
+    }
 
     // ===== Auth Functions =====
     function showLogin() {
@@ -592,18 +662,124 @@
     }
 
     function handleLogout() {
+      shouldKeepWebSocket = false;
       TOKEN = "";
       CURRENT_USER = null;
       localStorage.removeItem("omniprof_token");
       localStorage.removeItem("omniprof_user_id");
       localStorage.removeItem("omniprof_username");
-      if (ws) ws.close();
+      localStorage.removeItem("omniprof_session_id");
+      teardownDashboardRuntime();
       showLogin();
+    }
+
+    function teardownDashboardRuntime() {
+      if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+      }
+      if (progressIntervalId) {
+        clearInterval(progressIntervalId);
+        progressIntervalId = null;
+      }
+      if (achievementsIntervalId) {
+        clearInterval(achievementsIntervalId);
+        achievementsIntervalId = null;
+      }
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close();
+      }
+      ws = null;
+      dashboardInitialized = false;
     }
 
     // ===== API Functions =====
     function authHeaders() {
       return { "Authorization": `Bearer ${TOKEN}` };
+    }
+
+    function newSessionId() {
+      return `sess_${Date.now()}`;
+    }
+
+    async function featureRequest(path, options = {}) {
+      const headers = { ...(options.headers || {}), ...authHeaders() };
+      const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      let payload = null;
+      try {
+        payload = await res.json();
+      } catch (_err) {
+        payload = { raw: "No JSON body returned" };
+      }
+      return { ok: res.ok, status: res.status, payload };
+    }
+
+    function renderFeatureOutput(title, result) {
+      const output = document.getElementById("featureTestOutput");
+      output.textContent = `${title}\nStatus: ${result.status} (${result.ok ? "OK" : "ERROR"})\n\n${JSON.stringify(result.payload, null, 2)}`;
+    }
+
+    async function runFeatureTest(kind) {
+      const courseId = (document.getElementById("testCourseId")?.value || "").trim();
+      const prompt = (document.getElementById("testQuery")?.value || "Explain gradient descent briefly").trim();
+
+      try {
+        let result;
+        if (kind === "authMe") {
+          result = await featureRequest("/auth/me");
+          renderFeatureOutput("GET /auth/me", result);
+          return;
+        }
+        if (kind === "progress") {
+          const path = courseId ? `/student/progress?course_id=${encodeURIComponent(courseId)}` : "/student/progress";
+          result = await featureRequest(path);
+          renderFeatureOutput("GET /student/progress", result);
+          return;
+        }
+        if (kind === "achievements") {
+          result = await featureRequest("/student/achievements");
+          renderFeatureOutput("GET /student/achievements", result);
+          return;
+        }
+        if (kind === "query") {
+          result = await featureRequest("/query", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: prompt, course_id: courseId || null }),
+          });
+          renderFeatureOutput("POST /query", result);
+          return;
+        }
+        if (kind === "chat") {
+          result = await featureRequest("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: prompt,
+              session_id: newSessionId(),
+              course_id: courseId || null,
+            }),
+          });
+          renderFeatureOutput("POST /chat", result);
+          return;
+        }
+        if (kind === "graph") {
+          result = await featureRequest("/graph");
+          renderFeatureOutput("GET /graph", result);
+          return;
+        }
+        if (kind === "graphView") {
+          result = await featureRequest(`/graph-view?query=${encodeURIComponent(prompt)}`);
+          renderFeatureOutput("GET /graph-view", result);
+          return;
+        }
+      } catch (error) {
+        renderFeatureOutput(`Feature test failed: ${kind}`, {
+          ok: false,
+          status: "n/a",
+          payload: { error: String(error) },
+        });
+      }
     }
 
     async function fetchProgress() {
@@ -634,7 +810,11 @@
 
     // ===== WebSocket Functions =====
     function connectWebSocket() {
-      const wsUrl = `${API_BASE.replace("http", "ws")}/ws/chat?token=${encodeURIComponent(TOKEN)}`;
+      if (!TOKEN) return;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+      const wsUrl = `${API_BASE.replace("http", "ws")}/ws/chat?token=${encodeURIComponent(TOKEN)}&session_id=${encodeURIComponent(CURRENT_SESSION_ID)}`;
       ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
@@ -674,6 +854,15 @@
       ws.onclose = () => {
         console.log("WebSocket disconnected");
         document.getElementById("sendBtn").disabled = true;
+        ws = null;
+        if (shouldKeepWebSocket && document.getElementById("dashboard").classList.contains("show")) {
+          if (!wsReconnectTimer) {
+            wsReconnectTimer = setTimeout(() => {
+              wsReconnectTimer = null;
+              connectWebSocket();
+            }, 1500);
+          }
+        }
       };
     }
 
@@ -834,10 +1023,17 @@
 
     // ===== Initialization =====
     async function initializeDashboard() {
+      shouldKeepWebSocket = true;
+
       // Set user badge
       if (CURRENT_USER) {
         document.getElementById("userBadge").textContent = `${CURRENT_USER.username} (${CURRENT_USER.role})`;
       }
+
+      if (dashboardInitialized) {
+        return;
+      }
+      dashboardInitialized = true;
 
       // Connect WebSocket
       connectWebSocket();
@@ -847,8 +1043,12 @@
       await updateAchievements();
 
       // Refresh progress every 30 seconds
-      setInterval(updateProgress, 30000);
-      setInterval(updateAchievements, 30000);
+      if (!progressIntervalId) {
+        progressIntervalId = setInterval(updateProgress, 30000);
+      }
+      if (!achievementsIntervalId) {
+        achievementsIntervalId = setInterval(updateAchievements, 30000);
+      }
     }
 
     // ===== Startup =====
@@ -863,6 +1063,11 @@
       } else {
         showLogin();
       }
+    });
+
+    window.addEventListener("beforeunload", () => {
+      shouldKeepWebSocket = false;
+      teardownDashboardRuntime();
     });
   </script>
 </body>

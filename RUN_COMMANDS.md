@@ -24,6 +24,19 @@ Backend URL:
 API docs:
 - http://127.0.0.1:8000/docs
 
+## Default Test Accounts
+
+These are auto-seeded on backend startup when missing:
+
+- Student
+	- Username: `student_demo`
+	- Password: `Student@123`
+- Professor
+	- Username: `professor_demo`
+	- Password: `Professor@123`
+
+Local testing only. Rotate/remove before using shared or production deployments.
+
 ## Frontend
 
 This project uses dashboard pages under the `frontend/` folder.

@@ -7,12 +7,10 @@ This plan aligns with:
 
 ## Current Baseline (Observed)
 
-- `tests/legacy/test_ingestion.py` is outdated:
-  - Calls `IngestionService()` without required dependencies.
-- `tests/legacy/test_phase2.py` is outdated:
-  - Expects old graph API (`create_module`, `create_topic`, etc.) and old constructor.
-- `tests/legacy/test_phase3.py` requires `pytest`, which is not currently installed in active venv.
-- Frontend and backend have diverged from some historical phase docs (expected after pull and refactors).
+- Legacy suite compatibility has been restored (constructor/signature mismatches fixed).
+- `pytest`, `pytest-cov`, and `python-multipart` are installed in the active venv.
+- Full suite status (Apr 7, 2026): `95 passed`.
+- Frontend and backend remain aligned with phase 0-6 deliverables.
 
 ## Testing Principles
 

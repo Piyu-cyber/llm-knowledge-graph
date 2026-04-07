@@ -83,16 +83,21 @@ class GraphService:
         difficulty: float = 0.0
     ) -> Dict:
         """Create a concept under a topic"""
-        return self.graph.create_concept(
-            topic_id=topic_id,
-            name=self._normalize_name(name),
-            course_owner=course_owner,
-            description=description,
-            source_doc_ref=source_doc_ref,
-            embedding=embedding,
-            visibility=visibility,
-            difficulty=difficulty
-        )
+        payload = {
+            "topic_id": topic_id,
+            "name": self._normalize_name(name),
+            "course_owner": course_owner,
+            "description": description,
+            "source_doc_ref": source_doc_ref,
+            "embedding": embedding,
+            "visibility": visibility,
+            "difficulty": difficulty,
+        }
+        try:
+            return self.graph.create_concept(**payload)
+        except TypeError:
+            payload.pop("difficulty", None)
+            return self.graph.create_concept(**payload)
     
     
     # ==================== Fact Management ====================

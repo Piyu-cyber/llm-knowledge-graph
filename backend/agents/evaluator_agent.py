@@ -507,16 +507,10 @@ Return ONLY the JSON.
             Success status
         """
         try:
-            if hasattr(self.graph_manager, "create_defence_record"):
-                payload = record.to_dict()
-                payload["course_id"] = course_id or "unknown"
-                result = self.graph_manager.create_defence_record(payload)
-                return result.get("status") == "success"
-
-            query, params = CypherQueries.create_defence_record(record)
-            result = self.graph_manager.db.run_query(query, params)
-            logger.info(f"DefenceRecord created: {record.id}")
-            return bool(result)
+            payload = record.to_dict()
+            payload["course_id"] = course_id or "unknown"
+            result = self.graph_manager.create_defence_record(payload)
+            return result.get("status") == "success"
         except Exception as e:
             logger.error(f"DefenceRecord creation error: {str(e)}")
             return False

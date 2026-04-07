@@ -12,7 +12,7 @@ Welcome to OmniProf v3.0! This guide helps you quickly find what you need.
 3. **Key insight**: "Phase 0-6 Complete ✅ | Feature-Complete | Production-Ready"
 
 **Bottom Line**: 
-- ✅ 75+ tests passing
+- ✅ 95 tests passing
 - ✅ 12 services implemented
 - ✅ 8 agents working
 - ⏳ Phase 7 (hardening) planned
