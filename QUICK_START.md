@@ -20,7 +20,7 @@ The system is **fully functional, tested, and ready to deploy**.
 | Phases Completed | 0-6 (100%) ✅ |
 | Services Implemented | 12 |
 | API Endpoints | 20+ |
-| Test Cases | 75+ (100% passing) |
+| Test Cases | 95 (100% passing) |
 | Code Coverage | 85%+ |
 | Agents Implemented | 8 |
 | Lines of Code | 15,000+ |
@@ -67,7 +67,8 @@ frontend/
 └── professor_dashboard.html     # Professor UI mockup
 
 tests/
-├── phases/           # 75+ phase-gated acceptance tests (all passing)
+├── phases/           # phase-gated acceptance tests (all passing)
+├── legacy/           # legacy compatibility suites (all passing)
 └── conftest.py       # Shared pytest fixtures
 
 data/
@@ -81,7 +82,7 @@ data/
 
 ### Step 1: Install
 ```bash
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 ```
 
 ### Step 2: Configure
@@ -95,6 +96,19 @@ cp .env.example .env
 uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
 # Open http://localhost:8000/docs
 ```
+
+### Default Test Accounts (Auto-seeded)
+
+On backend startup, these accounts are created automatically if they do not already exist:
+
+- Student
+  - Username: `student_demo`
+  - Password: `Student@123`
+- Professor
+  - Username: `professor_demo`
+  - Password: `Professor@123`
+
+Use these for local testing only and change/remove them for shared environments.
 
 ---
 

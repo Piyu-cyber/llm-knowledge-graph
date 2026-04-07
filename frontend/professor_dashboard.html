@@ -376,6 +376,41 @@
       font-weight: 600;
       color: var(--ink);
     }
+
+    .test-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .test-btn {
+      background: #e9f7fa;
+      border: 1px solid #d2e3ef;
+      color: var(--accent);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 9px;
+      cursor: pointer;
+    }
+
+    .test-btn:hover {
+      background: #d8eff3;
+    }
+
+    .test-output {
+      background: #f9fbfd;
+      border: 1px solid #d2e3ef;
+      border-radius: 8px;
+      padding: 12px;
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 320px;
+      overflow: auto;
+      font-size: 12px;
+    }
     
     @media (max-width: 1000px) {
       .tabs-header {
@@ -411,6 +446,7 @@
         <button class="tab-button" onclick="switchTab(1)">📋 HITL Queue</button>
         <button class="tab-button" onclick="switchTab(2)">👤 Student Detail</button>
         <button class="tab-button" onclick="switchTab(3)">🧬 Knowledge Graph</button>
+        <button class="tab-button" onclick="switchTab(4)">🧪 Feature Test Lab</button>
       </div>
 
       <div class="tabs-content">
@@ -485,6 +521,37 @@
             </div>
           </div>
         </div>
+
+        <div class="tab">
+          <h2>Feature Test Lab</h2>
+          <div class="card">
+            <div class="form-group">
+              <label for="labCourseId">Course ID</label>
+              <input id="labCourseId" type="text" value="cs101" />
+            </div>
+            <div class="form-group">
+              <label for="labPrompt">Prompt</label>
+              <input id="labPrompt" type="text" value="Explain CRAG confidence routing" />
+            </div>
+            <div class="test-grid">
+              <button class="test-btn" onclick="runProfessorFeatureTest('authMe')">GET /auth/me</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('students')">GET /professor/students</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('cohort')">GET /professor/cohort</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('cohortOverview')">GET /professor/cohort-overview</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('hitlQueue')">GET /professor/hitl-queue</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('graphViz')">GET /professor/graph-visualization</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('routerHealth')">GET /llm-router/health</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('routerRoute')">POST /llm-router/route</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('learningPathGet')">GET /professor/learning-path</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('learningPathSave')">POST /professor/learning-path</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('bgStats')">GET /background-jobs/stats</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('bgDrain')">POST /background-jobs/drain</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('compliance')">GET /compliance/status</button>
+              <button class="test-btn" onclick="runProfessorFeatureTest('chatProbe')">POST /chat</button>
+            </div>
+            <pre id="profFeatureOutput" class="test-output">Run endpoint tests from this panel. Some endpoints require admin role and may return 403 for professor users.</pre>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -500,6 +567,124 @@
     // Auth
     function authHeaders() {
       return { "Authorization": `Bearer ${TOKEN}` };
+    }
+
+    function labSessionId() {
+      return `prof_sess_${Date.now()}`;
+    }
+
+    async function labRequest(path, options = {}) {
+      const headers = { ...(options.headers || {}), ...authHeaders() };
+      const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      let payload = null;
+      try {
+        payload = await res.json();
+      } catch (_err) {
+        payload = { raw: "No JSON body returned" };
+      }
+      return { ok: res.ok, status: res.status, payload };
+    }
+
+    function renderLabOutput(title, result) {
+      const out = document.getElementById("profFeatureOutput");
+      out.textContent = `${title}\nStatus: ${result.status} (${result.ok ? "OK" : "ERROR"})\n\n${JSON.stringify(result.payload, null, 2)}`;
+    }
+
+    async function runProfessorFeatureTest(kind) {
+      const courseId = (document.getElementById("labCourseId")?.value || "").trim() || "cs101";
+      const prompt = (document.getElementById("labPrompt")?.value || "Explain CRAG confidence routing").trim();
+
+      try {
+        let result;
+        if (kind === "authMe") {
+          result = await labRequest("/auth/me");
+          renderLabOutput("GET /auth/me", result);
+          return;
+        }
+        if (kind === "students") {
+          result = await labRequest("/professor/students");
+          renderLabOutput("GET /professor/students", result);
+          return;
+        }
+        if (kind === "cohort") {
+          result = await labRequest(`/professor/cohort?course_id=${encodeURIComponent(courseId)}`);
+          renderLabOutput("GET /professor/cohort", result);
+          return;
+        }
+        if (kind === "cohortOverview") {
+          result = await labRequest(`/professor/cohort-overview?course_id=${encodeURIComponent(courseId)}`);
+          renderLabOutput("GET /professor/cohort-overview", result);
+          return;
+        }
+        if (kind === "hitlQueue") {
+          result = await labRequest("/professor/hitl-queue");
+          renderLabOutput("GET /professor/hitl-queue", result);
+          return;
+        }
+        if (kind === "graphViz") {
+          result = await labRequest(`/professor/graph-visualization?course_id=${encodeURIComponent(courseId)}`);
+          renderLabOutput("GET /professor/graph-visualization", result);
+          return;
+        }
+        if (kind === "routerHealth") {
+          result = await labRequest("/llm-router/health");
+          renderLabOutput("GET /llm-router/health", result);
+          return;
+        }
+        if (kind === "routerRoute") {
+          result = await labRequest("/llm-router/route", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ task: "ta_tutoring", prompt }),
+          });
+          renderLabOutput("POST /llm-router/route", result);
+          return;
+        }
+        if (kind === "learningPathGet") {
+          result = await labRequest(`/professor/learning-path?course_id=${encodeURIComponent(courseId)}`);
+          renderLabOutput("GET /professor/learning-path", result);
+          return;
+        }
+        if (kind === "learningPathSave") {
+          result = await labRequest("/professor/learning-path", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ course_id: courseId, ordered_concept_ids: [], partial_order_edges: [] }),
+          });
+          renderLabOutput("POST /professor/learning-path", result);
+          return;
+        }
+        if (kind === "bgStats") {
+          result = await labRequest("/background-jobs/stats");
+          renderLabOutput("GET /background-jobs/stats", result);
+          return;
+        }
+        if (kind === "bgDrain") {
+          result = await labRequest("/background-jobs/drain", { method: "POST" });
+          renderLabOutput("POST /background-jobs/drain", result);
+          return;
+        }
+        if (kind === "compliance") {
+          result = await labRequest("/compliance/status");
+          renderLabOutput("GET /compliance/status", result);
+          return;
+        }
+        if (kind === "chatProbe") {
+          result = await labRequest("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: prompt, session_id: labSessionId(), course_id: courseId }),
+          });
+          renderLabOutput("POST /chat", result);
+          return;
+        }
+      } catch (error) {
+        renderLabOutput(`Feature test failed: ${kind}`, {
+          ok: false,
+          status: "n/a",
+          payload: { error: String(error) },
+        });
+      }
     }
 
     function showLogin() {

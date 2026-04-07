@@ -9,7 +9,7 @@
 
 OmniProf is a **complete AI-driven educational platform** featuring multi-agent orchestration, adaptive tutoring, knowledge tracing, and academic integrity checking.
 
-**Key Achievement**: All 75+ tests passing ✅ | 8 agents fully functional ✅ | 12 services deployed ✅
+**Key Achievement**: All 95 tests passing ✅ | 8 agents fully functional ✅ | 12 services deployed ✅
 
 ---
 
@@ -71,7 +71,7 @@ OmniProf is a **complete AI-driven educational platform** featuring multi-agent 
 
 ### Testing Suite (100% Passing)
 
-- ✅ 75+ automated tests across 6 phases
+- ✅ 95 automated tests across legacy + phase suites
 - ✅ Phase gates enforced (must pass previous phase)
 - ✅ 85%+ code coverage
 - ✅ Integration tests for critical paths
@@ -144,7 +144,7 @@ OmniProf is a **complete AI-driven educational platform** featuring multi-agent 
 | **Backend Files** | 30+ modules |
 | **Lines of Code** | 15,000+ |
 | **Test Files** | 13 files |
-| **Test Cases** | 75+ (100% passing) |
+| **Test Cases** | 95 (100% passing) |
 | **Code Coverage** | 85%+ |
 | **API Endpoints** | 20+ |
 | **Agents** | 8 |
@@ -259,7 +259,8 @@ backend/
   app.py            → FastAPI entrypoint (20+ routes)
 
 tests/
-  phases/           → 13 test modules, 75+ tests (100% passing)
+  phases/           → 13 phase-gated modules (all passing)
+  legacy/           → baseline compatibility modules (all passing)
   conftest.py       → Shared test fixtures
 
 frontend/
@@ -291,7 +292,7 @@ docs/
 4. **Knowledge Tracing** - Bayesian model per student-concept pair
 5. **Integrity Verified** - Writing fingerprint + anomaly detection
 6. **Production-Grade** - Error recovery, logging, monitoring
-7. **Well-Tested** - 75+ tests, 85%+ coverage, 100% passing
+7. **Well-Tested** - 95 tests, 85%+ coverage, 100% passing
 8. **Thoroughly Documented** - 50+ pages of comprehensive docs
 
 ---
@@ -300,7 +301,7 @@ docs/
 
 ### Immediate (5 minutes)
 ```bash
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 cp .env.example .env
 # Add Groq API key to .env
 uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000

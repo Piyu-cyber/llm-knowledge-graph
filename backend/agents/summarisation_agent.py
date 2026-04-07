@@ -457,74 +457,15 @@ class SummarisationAgent:
             Memory anchor ID if successful, None otherwise
         """
         try:
-            import uuid
-            memory.memory_id = str(uuid.uuid4())[:12]
-
-            if hasattr(self.graph_manager, "create_memory_anchor"):
-                result = self.graph_manager.create_memory_anchor(
-                    student_id=memory.student_id,
-                    session_id=session_id,
-                    summary=memory.summary_text,
-                    key_concepts=memory.concepts,
-                )
-                if result.get("status") == "success":
-                    return result.get("node_id")
-                if not hasattr(self.graph_manager, "db"):
-                    return None
-            
-            # Create memory anchor node
-            query = (
-                "MATCH (student:User {id: $student_id}) "
-                "MATCH (session:Session {id: $session_id}) "
-                "CREATE (mem:MemoryAnchor {"
-                "  id: $memory_id,"
-                "  session_date: $session_date,"
-                "  summary_text: $summary_text,"
-                "  misconceptions: $misconceptions,"
-                "  created_at: $created_at"
-                "}) "
-                "CREATE (student)-[:HAS_MEMORY]->(mem) "
-                "CREATE (session)-[:SUMMARIZED_TO]->(mem) "
-                "RETURN mem.id"
+            result = self.graph_manager.create_memory_anchor(
+                student_id=memory.student_id,
+                session_id=session_id,
+                summary=memory.summary_text,
+                key_concepts=memory.concepts,
             )
-            
-            result = self.graph_manager.db.run_query(
-                query,
-                {
-                    "student_id": memory.student_id,
-                    "session_id": session_id,
-                    "memory_id": memory.memory_id,
-                    "session_date": memory.session_date,
-                    "summary_text": memory.summary_text,
-                    "misconceptions": json.dumps(memory.misconceptions),
-                    "created_at": memory.created_at
-                }
-            )
-            
-            if not result:
-                return None
-            
-            # Link to related concepts
-            for concept_id in memory.concepts:
-                try:
-                    link_query = (
-                        "MATCH (mem:MemoryAnchor {id: $memory_id}) "
-                        "MATCH (concept:CONCEPT {id: $concept_id}) "
-                        "CREATE (mem)-[:DISCUSSED]->(concept)"
-                    )
-                    
-                    self.graph_manager.db.run_query(
-                        link_query,
-                        {
-                            "memory_id": memory.memory_id,
-                            "concept_id": concept_id
-                        }
-                    )
-                except Exception as e:
-                    logger.warning(f"Concept linking error: {str(e)}")
-            
-            logger.info(f"MemoryAnchor written: {memory.memory_id}")
-            return memory.memory_id
+            if result.get("status") == "success":
+                return result.get("memory_id") or result.get("node_id")
+            return None
             
         except Exception as e:
             logger.error(f"MemoryAnchor writing error: {str(e)}")
@@ -641,45 +582,13 @@ class SummarisationAgent:
             Success status
         """
         try:
-            if hasattr(self.graph_manager, "create_semantic_node"):
-                result = self.graph_manager.create_semantic_node(
-                    student_id=semantic.student_id,
-                    fact=semantic.fact,
-                    concept_id=semantic.concept_id,
-                    confidence=semantic.confidence,
-                )
-                return result.get("status") == "success"
-
-            query = (
-                "MATCH (student:User {id: $student_id}) "
-                "MATCH (concept:CONCEPT {id: $concept_id}) "
-                "CREATE (sem:SemanticNode {"
-                "  id: $semantic_id,"
-                "  fact: $fact,"
-                "  confidence: $confidence,"
-                "  source_session_id: $source_session_id,"
-                "  created_at: $created_at,"
-                "  access_count: 0"
-                "}) "
-                "CREATE (student)-[:LEARNED_FROM]->(sem) "
-                "CREATE (sem)-[:EXTRACTED_FROM]->(concept) "
-                "RETURN sem.id"
+            result = self.graph_manager.create_semantic_node(
+                student_id=semantic.student_id,
+                fact=semantic.fact,
+                concept_id=semantic.concept_id,
+                confidence=semantic.confidence,
             )
-            
-            result = self.graph_manager.db.run_query(
-                query,
-                {
-                    "student_id": semantic.student_id,
-                    "concept_id": semantic.concept_id,
-                    "semantic_id": semantic.id,
-                    "fact": semantic.fact,
-                    "confidence": semantic.confidence,
-                    "source_session_id": semantic.source_session_id,
-                    "created_at": semantic.created_at
-                }
-            )
-            
-            return bool(result)
+            return result.get("status") == "success"
             
         except Exception as e:
             logger.error(f"Semantic node writing error: {str(e)}")
@@ -737,24 +646,23 @@ class SummarisationAgent:
             List of memory dicts
         """
         try:
-            query = (
-                "MATCH (student:User {id: $student_id})-[:HAS_MEMORY]->(mem:MemoryAnchor) "
-                "WITH mem "
-                "OPTIONAL MATCH (mem)-[:DISCUSSED]->(concept:CONCEPT) "
-                "RETURN mem.id as id, mem.session_date as session_date, "
-                "       COLLECT(concept.id) as concepts, "
-                "       mem.summary_text as summary, "
-                "       mem.misconceptions as misconceptions, "
-                "       mem.created_at as created_at "
-                "ORDER BY mem.created_at DESC"
-            )
-            
-            result = self.graph_manager.db.run_query(
-                query,
-                {"student_id": student_id}
-            )
-            
-            return result if result else []
+            if hasattr(self.graph_manager, "get_memory_anchors"):
+                try:
+                    return self.graph_manager.get_memory_anchors(student_id)
+                except TypeError:
+                    pass
+
+            anchors_path = os.path.join(self.data_dir, "memory_anchors.json")
+            if not os.path.exists(anchors_path):
+                return []
+
+            with open(anchors_path, 'r', encoding='utf-8') as f:
+                anchors = json.load(f)
+
+            if not isinstance(anchors, list):
+                anchors = [anchors]
+
+            return [a for a in anchors if a.get("student_id") == student_id]
             
         except Exception as e:
             logger.warning(f"Memory retrieval error: {str(e)}")

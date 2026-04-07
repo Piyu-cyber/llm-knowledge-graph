@@ -98,6 +98,59 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
 
+def ensure_default_users() -> None:
+    """Create default student/professor users for local testing if absent."""
+    seed_logger = logging.getLogger(__name__)
+    defaults = [
+        {
+            "username": "student_demo",
+            "email": "student_demo@omniprof.local",
+            "password": "Student@123",
+            "role": "student",
+            "course_ids": ["cs101"],
+            "user_id": "user_default_student",
+            "full_name": "Demo Student",
+        },
+        {
+            "username": "professor_demo",
+            "email": "professor_demo@omniprof.local",
+            "password": "Professor@123",
+            "role": "professor",
+            "course_ids": ["cs101"],
+            "user_id": "user_default_professor",
+            "full_name": "Demo Professor",
+        },
+    ]
+
+    for account in defaults:
+        if user_store.user_exists(account["username"]):
+            continue
+        if user_store.email_exists(account["email"]):
+            seed_logger.warning(
+                "Skipping default user seed for %s because email already exists",
+                account["username"],
+            )
+            continue
+
+        user_store.add_user(
+            account["username"],
+            {
+                "user_id": account["user_id"],
+                "username": account["username"],
+                "email": account["email"],
+                "password": hash_password(account["password"]),
+                "full_name": account["full_name"],
+                "role": account["role"],
+                "course_ids": account["course_ids"],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        seed_logger.info("Default test user seeded: %s", account["username"])
+
+
+ensure_default_users()
+
+
 def create_user_context(current_user: Dict) -> UserContext:
     """
     Create UserContext object from JWT token user data.
