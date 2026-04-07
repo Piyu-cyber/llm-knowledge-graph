@@ -11,13 +11,14 @@ Features:
 """
 
 import logging
+import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 import json
 
 from backend.agents.state import AgentState
-from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.graph_manager import GraphManager
 from backend.db.neo4j_schema import SemanticNode
 from backend.services.llm_service import LLMService
 
@@ -72,30 +73,25 @@ class SummarisationAgent:
     MEMORY_AGE_DAYS = 7
     BATCH_SIZE = 20  # Process interactions in batches
     
-    def __init__(self, neo4j_uri: Optional[str] = None,
-                 neo4j_user: Optional[str] = None,
-                 neo4j_password: Optional[str] = None,
+    def __init__(self, data_dir: Optional[str] = None,
                  groq_api_key: Optional[str] = None):
         """
         Initialize Summarisation Agent.
         
         Args:
-            neo4j_uri: Neo4j database URI
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
+            data_dir: Path to data directory for graph persistence
             groq_api_key: Groq API key for LLM
         """
-        import os
         from dotenv import load_dotenv
         
         load_dotenv()
         
-        self.graph_manager = Neo4jGraphManager(
-            uri=neo4j_uri or os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=neo4j_user or os.getenv("NEO4J_USER", "neo4j"),
-            password=neo4j_password or os.getenv("NEO4J_PASSWORD", "password")
+        # Use GraphManager which uses RustWorkX backend
+        self.graph_manager = GraphManager(
+            data_dir=data_dir or os.getenv("DATA_DIR", "data")
         )
         
+        self.data_dir = self.graph_manager.data_dir
         self.llm_service = LLMService()
     
     
@@ -162,33 +158,66 @@ class SummarisationAgent:
         """
         Get all interactions older than cutoff date.
         
-        Groups interactions by (student, session) for summarization.
+        Reads from session_checkpoints.json and filters those that don't
+        have a corresponding memory anchor yet. Groups by (student, session).
         
         Args:
             cutoff_date: ISO timestamp cutoff (older than this)
         
         Returns:
-            List of interaction dicts grouped by session
+            List of dicts with {student_id, session_id, session_date}
         """
         try:
-            query = (
-                "MATCH (student:User)-[r:HAS_INTERACTION]->(session:Session) "
-                "WHERE session.created_at < $cutoff_date "
-                "AND NOT EXISTS("
-                "  MATCH (session)-[:SUMMARIZED_TO]->(mem:MemoryAnchor) "
-                ") "
-                "RETURN DISTINCT student.id as student_id, "
-                "       session.id as session_id, "
-                "       session.created_at as session_date "
-                "ORDER BY session.created_at DESC"
-            )
+            # Read session checkpoints
+            sessions_path = os.path.join(self.data_dir, "session_checkpoints.json")
+            if not os.path.exists(sessions_path):
+                return []
             
-            result = self.graph_manager.db.run_query(
-                query,
-                {"cutoff_date": cutoff_date}
-            )
+            with open(sessions_path, 'r', encoding='utf-8') as f:
+                sessions = json.load(f)
             
-            return result if result else []
+            if not isinstance(sessions, list):
+                sessions = [sessions]
+            
+            # Read existing memory anchors to check what's already summarized
+            anchors_path = os.path.join(self.data_dir, "memory_anchors.json")
+            summarized_sessions = set()
+            
+            if os.path.exists(anchors_path):
+                try:
+                    with open(anchors_path, 'r', encoding='utf-8') as f:
+                        anchors = json.load(f)
+                    if not isinstance(anchors, list):
+                        anchors = [anchors]
+                    # Track which sessions are already summarized
+                    summarized_sessions = {a.get('session_id') for a in anchors if a.get('session_id')}
+                except (json.JSONDecodeError, IOError):
+                    pass
+            
+            # Filter sessions older than cutoff and not yet summarized
+            old_interactions = []
+            for session in sessions:
+                session_id = session.get('session_id')
+                student_id = session.get('student_id')
+                session_date = session.get('timestamp') or session.get('created_at')
+                
+                # Skip if already summarized
+                if session_id in summarized_sessions:
+                    continue
+                
+                # Check if older than cutoff
+                if session_date and session_date < cutoff_date:
+                    old_interactions.append({
+                        "student_id": student_id,
+                        "session_id": session_id,
+                        "session_date": session_date
+                    })
+            
+            # Sort by date descending (newest old interactions first)
+            old_interactions.sort(key=lambda x: x.get('session_date', ''), reverse=True)
+            
+            logger.debug(f"Found {len(old_interactions)} old unsummarized interactions")
+            return old_interactions
             
         except Exception as e:
             logger.warning(f"Old interactions query error: {str(e)}")
@@ -263,6 +292,9 @@ class SummarisationAgent:
         """
         Extract concepts, confidence levels, and misconceptions from session.
         
+        Reads from session_checkpoints.json and extracts concepts
+        mentioned in the messages field.
+        
         Args:
             student_id: Student ID
             session_id: Session ID
@@ -271,32 +303,51 @@ class SummarisationAgent:
             Tuple of (concepts, confidence_dict, misconceptions)
         """
         try:
-            # Get concepts discussed and confidence in this session
-            query = (
-                "MATCH (sessions:Session {id: $session_id}) "
-                "MATCH (sessions)-[:DISCUSSED]->(concept:CONCEPT) "
-                "MATCH (overlay:StudentOverlay {user_id: $student_id, concept_id: concept.id}) "
-                "RETURN concept.id as concept_id, "
-                "       concept.name as concept_name, "
-                "       overlay.mastery_probability as confidence "
-                "ORDER BY concept.id"
-            )
+            # Read session from checkpoints
+            sessions_path = os.path.join(self.data_dir, "session_checkpoints.json")
+            if not os.path.exists(sessions_path):
+                return [], {}, []
             
-            result = self.graph_manager.db.run_query(
-                query,
-                {"student_id": student_id, "session_id": session_id}
-            )
+            with open(sessions_path, 'r', encoding='utf-8') as f:
+                sessions = json.load(f)
             
+            if not isinstance(sessions, list):
+                sessions = [sessions]
+            
+            # Find the target session
+            target_session = None
+            for session in sessions:
+                if session.get('session_id') == session_id and session.get('student_id') == student_id:
+                    target_session = session
+                    break
+            
+            if not target_session:
+                return [], {}, []
+            
+            # Extract concepts from messages
             concepts = []
             confidence = {}
+            messages = target_session.get('messages', [])
             
-            for row in result:
-                concept_id = row.get("concept_id")
-                conf = row.get("confidence") or 0.0
-                concepts.append(concept_id)
-                confidence[concept_id] = conf
+            # Parse messages to find mentioned concepts
+            if isinstance(messages, list):
+                for msg in messages:
+                    content = msg.get('content', '')
+                    # Simple extraction: look for concept mentions
+                    # In real implementation, would use NLP to extract concepts
+                    # For now, extract concept_id if present in metadata
+                    if isinstance(msg, dict):
+                        mentioned_concept = msg.get('concept_id') or msg.get('concept')
+                        if mentioned_concept and mentioned_concept not in concepts:
+                            concepts.append(mentioned_concept)
+                            # Try to get confidence from StudentOverlay
+                            overlay = self.graph_manager.get_student_overlay(student_id, mentioned_concept)
+                            if overlay:
+                                confidence[mentioned_concept] = overlay.get('mastery_probability', 0.5)
+                            else:
+                                confidence[mentioned_concept] = 0.5
             
-            # Extract misconceptions from evaluator notes
+            # Extract misconceptions from evaluation records
             misconceptions = self._get_session_misconceptions(student_id, session_id)
             
             return concepts, confidence, misconceptions
@@ -310,6 +361,9 @@ class SummarisationAgent:
         """
         Extract misconceptions from evaluation records in session.
         
+        Reads from defence_records.json to find feedback containing
+        "misconception" for the given student and session.
+        
         Args:
             student_id: Student ID
             session_id: Session ID
@@ -318,23 +372,27 @@ class SummarisationAgent:
             List of misconception strings
         """
         try:
-            query = (
-                "MATCH (session:Session {id: $session_id}) "
-                "MATCH (session)-[:CONTAINS]->(record:DefenceRecord) "
-                "WHERE record.student_id = $student_id "
-                "AND record.ai_feedback CONTAINS 'misconception' "
-                "RETURN record.ai_feedback as feedback"
-            )
+            # Read defence records
+            records_path = os.path.join(self.data_dir, "defence_records.json")
+            if not os.path.exists(records_path):
+                return []
             
-            result = self.graph_manager.db.run_query(
-                query,
-                {"student_id": student_id, "session_id": session_id}
-            )
+            with open(records_path, 'r', encoding='utf-8') as f:
+                records = json.load(f)
+            
+            if not isinstance(records, list):
+                records = [records]
             
             misconceptions = []
-            for row in result:
-                feedback = row.get("feedback", "")
-                if "misconception" in feedback.lower():
+            for record in records:
+                # Filter by student_id and session_id
+                if (record.get('student_id') != student_id or 
+                    record.get('session_id') != session_id):
+                    continue
+                
+                # Extract feedback with misconceptions
+                feedback = record.get('ai_feedback', '')
+                if feedback and 'misconception' in feedback.lower():
                     misconceptions.append(feedback[:100])  # First 100 chars
             
             return misconceptions

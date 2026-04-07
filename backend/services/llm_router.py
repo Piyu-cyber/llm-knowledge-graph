@@ -204,18 +204,63 @@ class LLMRouter:
             raise RuntimeError("groq empty response")
         return text
 
-    def _call_cerebras(self, prompt: str) -> str:
+    def _call_cerebras(self, prompt: str) -> Optional[str]:
+        """Call Cerebras Cloud API using cerebras-cloud-sdk."""
         if "cerebras" in self.force_rate_limit:
             raise RuntimeError("429 rate limit from cerebras")
         if not os.getenv("CEREBRAS_API_KEY"):
             raise RuntimeError("cerebras not configured")
-        # Placeholder implementation: production wiring can call Cerebras API client.
-        return f"[cerebras] {prompt[:280]}"
+        
+        try:
+            from cerebras.cloud.sdk import Cerebras
+            
+            client = Cerebras(api_key=os.getenv("CEREBRAS_API_KEY"))
+            response = client.chat.completions.create(
+                model="llama3.1-8b",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content.strip()
+            
+        except ImportError:
+            raise RuntimeError("cerebras-cloud-sdk not installed")
+        except Exception as e:
+            # Mark provider as rate-limited and return None for fallthrough
+            error_str = str(e).lower()
+            if "429" in error_str or "rate" in error_str:
+                self.providers["cerebras"].available = False
+                self.providers["cerebras"].backoff_until_unix = (
+                    time.time() + self.base_backoff_seconds
+                )
+            raise RuntimeError(f"cerebras error: {str(e)}")
 
-    def _call_nim(self, prompt: str) -> str:
+    def _call_nim(self, prompt: str) -> Optional[str]:
+        """Call NVIDIA NIM endpoint using OpenAI client."""
         if "nim" in self.force_rate_limit:
             raise RuntimeError("429 rate limit from nim")
         if not os.getenv("NVIDIA_NIM_API_KEY"):
             raise RuntimeError("nim not configured")
-        # Placeholder implementation: production wiring can call NIM endpoint.
-        return f"[nim] {prompt[:280]}"
+        
+        try:
+            from openai import OpenAI
+            
+            client = OpenAI(
+                base_url="https://integrate.api.nvidia.com/v1",
+                api_key=os.getenv("NVIDIA_NIM_API_KEY")
+            )
+            response = client.chat.completions.create(
+                model="meta/llama-3.1-8b-instruct",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content.strip()
+            
+        except ImportError:
+            raise RuntimeError("openai not installed")
+        except Exception as e:
+            # Mark provider as rate-limited and return None for fallthrough
+            error_str = str(e).lower()
+            if "429" in error_str or "rate" in error_str:
+                self.providers["nim"].available = False
+                self.providers["nim"].backoff_until_unix = (
+                    time.time() + self.base_backoff_seconds
+                )
+            raise RuntimeError(f"nim error: {str(e)}")

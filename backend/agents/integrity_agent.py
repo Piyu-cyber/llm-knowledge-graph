@@ -12,6 +12,7 @@ Features:
 import logging
 import os
 import re
+import json
 from typing import Dict, List, Optional, Tuple
 from statistics import mean, stdev
 
@@ -225,52 +226,99 @@ class IntegrityAgent:
         """
         Retrieve all prior TA Agent interactions for student.
         
-        Queries for all messages where:
-        - active_agent == "ta_agent"
-        - role == "assistant" (TA's response)
+        Reads from two sources:
+        1. data/defence_records.json - past transcripts for the student
+        2. data/session_checkpoints.json - session messages where role == "student"
         
         Args:
             student_id: Student user ID
         
         Returns:
-            List of message dicts with content
+            List of message dicts with content, deduplicated by content
         """
         try:
-            # In practice, this would query the conversation history database
-            # For now, we return empty (would be populated by calling application)
-            # This simulates: SELECT content FROM interactions WHERE student_id=? AND agent="ta_agent"
-            
-            query = """
-            MATCH (s:StudentOverlay {user_id: $user_id})
-            MATCH (s)-[:STUDIED_BY]->(c:CONCEPT)
-            RETURN c.name as topic
-            """
-            
-            # Fallback for local/test runs: allow explicit samples from metadata-driven stores.
-            if hasattr(self.graph_manager, "_read_json_list") and hasattr(self.graph_manager, "_defence_records_path"):
-                rows = self.graph_manager._read_json_list(self.graph_manager._defence_records_path())
-                samples: List[Dict] = []
-                for row in rows:
-                    if str(row.get("student_id")) != str(student_id):
-                        continue
-                    transcript = row.get("transcript", [])
-                    if isinstance(transcript, str):
-                        try:
-                            import json
-                            transcript = json.loads(transcript)
-                        except Exception:
-                            transcript = []
-                    for turn in transcript:
-                        if turn.get("role") == "student":
-                            samples.append({"content": turn.get("content", "")})
-                if samples:
-                    return samples
-
             logger.debug(f"Retrieving prior TA interactions for {student_id}")
             
-            # TODO: Implement actual message history query
-            # Would integrate with conversation storage (database or file)
-            return []
+            # Get project root: backend/agents/integrity_agent.py -> ../../../
+            project_root = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..")
+            )
+            
+            defence_records_path = os.path.join(project_root, "data", "defence_records.json")
+            session_checkpoints_path = os.path.join(project_root, "data", "session_checkpoints.json")
+            
+            samples: List[Dict] = []
+            seen_contents = set()  # For deduplication
+            
+            # ========== Source 1: defence_records.json ==========
+            if os.path.exists(defence_records_path):
+                try:
+                    with open(defence_records_path, 'r', encoding='utf-8') as f:
+                        records = json.load(f)
+                    
+                    # Ensure it's a list
+                    if not isinstance(records, list):
+                        records = [records]
+                    
+                    for record in records:
+                        if str(record.get("student_id")) != str(student_id):
+                            continue
+                        
+                        transcript = record.get("transcript", [])
+                        # Handle case where transcript is a JSON string
+                        if isinstance(transcript, str):
+                            try:
+                                transcript = json.loads(transcript)
+                            except (json.JSONDecodeError, ValueError):
+                                transcript = []
+                        
+                        # Extract all student messages from transcript
+                        if isinstance(transcript, list):
+                            for turn in transcript:
+                                if turn.get("role") == "student":
+                                    content = turn.get("content", "").strip()
+                                    if content and content not in seen_contents:
+                                        seen_contents.add(content)
+                                        samples.append({"content": content})
+                    
+                    logger.debug(f"Found {len(samples)} student messages in defence_records for {student_id}")
+                
+                except (json.JSONDecodeError, IOError) as e:
+                    logger.warning(f"Error reading defence_records.json: {str(e)}")
+            else:
+                logger.debug(f"defence_records.json not found at {defence_records_path}")
+            
+            # ========== Source 2: session_checkpoints.json ==========
+            if os.path.exists(session_checkpoints_path):
+                try:
+                    with open(session_checkpoints_path, 'r', encoding='utf-8') as f:
+                        sessions = json.load(f)
+                    
+                    # Ensure it's a list
+                    if not isinstance(sessions, list):
+                        sessions = [sessions]
+                    
+                    for session in sessions:
+                        if str(session.get("student_id")) != str(student_id):
+                            continue
+                        
+                        messages = session.get("messages", [])
+                        if isinstance(messages, list):
+                            for msg in messages:
+                                if msg.get("role") == "student":
+                                    content = msg.get("content", "").strip()
+                                    if content and content not in seen_contents:
+                                        seen_contents.add(content)
+                                        samples.append({"content": content})
+                    
+                    logger.debug(f"Found {len(samples)} total messages after processing session_checkpoints for {student_id}")
+                
+                except (json.JSONDecodeError, IOError) as e:
+                    logger.warning(f"Error reading session_checkpoints.json: {str(e)}")
+            else:
+                logger.debug(f"session_checkpoints.json not found at {session_checkpoints_path}")
+            
+            return samples
             
         except Exception as e:
             logger.warning(f"Prior interaction retrieval error: {str(e)}")
@@ -458,27 +506,17 @@ class IntegrityAgent:
             Success status
         """
         try:
-            if hasattr(self.graph_manager, "update_defence_record"):
-                result = self.graph_manager.update_defence_record(
-                    record_id,
-                    {
-                        "status": status,
-                        "integrity_score": integrity_score,
-                        "anomalous_input": anomalous_input,
-                    },
-                )
-                return result.get("status") == "success"
-
-            query, params = CypherQueries.update_defence_record(
+            result = self.graph_manager.update_defence_record(
                 record_id,
-                status,
-                integrity_score,
-                anomalous_input
+                {
+                    "status": status,
+                    "integrity_score": integrity_score,
+                    "anomalous_input": anomalous_input,
+                },
             )
-            result = self.graph_manager.db.run_query(query, params)
             logger.info(f"DefenceRecord {record_id} updated: status={status}, "
                        f"integrity_score={integrity_score:.2f}")
-            return bool(result)
+            return result.get("status") == "success"
         except Exception as e:
             logger.error(f"DefenceRecord update error: {str(e)}")
             return False

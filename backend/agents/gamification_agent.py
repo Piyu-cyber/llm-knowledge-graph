@@ -10,12 +10,13 @@ Features:
 """
 
 import logging
+import os
 from typing import Dict, List, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
 
 from backend.agents.state import AgentState
-from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -57,26 +58,20 @@ class GamificationAgent:
     All achievements are stored in Neo4j and are private per student.
     """
     
-    def __init__(self, neo4j_uri: Optional[str] = None,
-                 neo4j_user: Optional[str] = None,
-                 neo4j_password: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None):
         """
         Initialize Gamification Agent.
         
         Args:
-            neo4j_uri: Neo4j database URI
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
+            data_dir: Path to data directory for graph persistence
         """
-        import os
         from dotenv import load_dotenv
         
         load_dotenv()
         
-        self.graph_manager = Neo4jGraphManager(
-            uri=neo4j_uri or os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=neo4j_user or os.getenv("NEO4J_USER", "neo4j"),
-            password=neo4j_password or os.getenv("NEO4J_PASSWORD", "password")
+        # Use GraphManager which uses RustWorkX backend
+        self.graph_manager = GraphManager(
+            data_dir=data_dir or os.getenv("DATA_DIR", "data")
         )
     
     
@@ -156,28 +151,40 @@ class GamificationAgent:
             Achievement if new explorer badge, None otherwise
         """
         try:
-            # Find modules where student has visited at least one concept
-            # but hasn't earned explorer badge yet
-            query = (
-                "MATCH (student:User {id: $student_id}) "
-                "MATCH (module:MODULE)-[:CONTAINS]->(concept:CONCEPT) "
-                "MATCH (overlay:StudentOverlay {user_id: $student_id, concept_id: concept.id}) "
-                "WHERE overlay.visited = true "
-                "AND NOT EXISTS("
-                "  MATCH (student)-[:EARNED]->(ach:Achievement "
-                "       {achievement_type: 'explorer', module_id: module.id}) "
-                ") "
-                "RETURN DISTINCT module.id as module_id, module.name as module_name "
-                "LIMIT 1"
-            )
+            # Get all overlays for this student and find visited modules
+            overlays = self.graph_manager.get_all_student_overlays(student_id)
+            visited_modules = {}
             
-            result = self.graph_manager.db.run_query(
-                query,
-                {"student_id": student_id}
-            )
+            for overlay in overlays:
+                if not overlay.get('visited'):
+                    continue
+                
+                concept_id = overlay.get('concept_id')
+                if not concept_id:
+                    continue
+                
+                # Navigate to module via concept -> topic -> module  
+                concept = self.graph_manager.get_concept_by_id(concept_id)
+                if not concept:
+                    continue
+                
+                topic_id = concept.get('topic_id')
+                if not topic_id:
+                    continue
+                
+                topic = self.graph_manager.get_node_by_id(topic_id)
+                if not topic:
+                    continue
+                
+                module_id = topic.get('module_id')
+                if module_id and not self.graph_manager.has_achievement(
+                    student_id, 'explorer', module_id=module_id
+                ):
+                    visited_modules[module_id] = topic.get('name', 'Module')
             
-            if result:
-                module_id = result[0].get("module_id")
+            # Return first unearned explorer badge
+            if visited_modules:
+                module_id = list(visited_modules.keys())[0]
                 return Achievement(
                     student_id=student_id,
                     achievement_type="explorer",
@@ -205,35 +212,31 @@ class GamificationAgent:
             List of Achievement objects for newly mastered concepts
         """
         try:
-            # Find concepts with mastery > 0.8 but no mastery badge yet
-            query = (
-                "MATCH (student:User {id: $student_id}) "
-                "MATCH (overlay:StudentOverlay {user_id: $student_id}) "
-                "WHERE overlay.mastery_probability > 0.8 "
-                "AND NOT EXISTS("
-                "  MATCH (student)-[:EARNED]->(ach:Achievement "
-                "       {achievement_type: 'mastery', concept_id: overlay.concept_id}) "
-                ") "
-                "RETURN overlay.concept_id as concept_id "
-                "LIMIT 10"
-            )
-            
-            result = self.graph_manager.db.run_query(
-                query,
-                {"student_id": student_id}
-            )
-            
+            # Get all overlays and find those with mastery > 0.8 but no badge yet
+            overlays = self.graph_manager.get_all_student_overlays(student_id)
             achievements = []
-            for row in result:
-                concept_id = row.get("concept_id")
-                achievements.append(Achievement(
-                    student_id=student_id,
-                    achievement_type="mastery",
-                    concept_id=concept_id,
-                    module_id=None
-                ))
             
-            return achievements
+            for overlay in overlays:
+                mastery = overlay.get('mastery_probability', 0.0)
+                if mastery <= 0.8:
+                    continue
+                
+                concept_id = overlay.get('concept_id')
+                if not concept_id:
+                    continue
+                
+                # Check if already has mastery badge for this concept
+                if not self.graph_manager.has_achievement(
+                    student_id, 'mastery', concept_id=concept_id
+                ):
+                    achievements.append(Achievement(
+                        student_id=student_id,
+                        achievement_type="mastery",
+                        concept_id=concept_id,
+                        module_id=None
+                    ))
+            
+            return achievements[:10]  # Limit to 10 per call
             
         except Exception as e:
             logger.warning(f"Mastery milestone check error: {str(e)}")
@@ -253,36 +256,55 @@ class GamificationAgent:
             Achievement if module newly completed, None otherwise
         """
         try:
-            # Find all modules and check completion
-            query = (
-                "MATCH (module:MODULE)-[:CONTAINS]->(concept:CONCEPT) "
-                "WITH module, COUNT(concept) as total_concepts "
-                "MATCH (module)-[:CONTAINS]->(c:CONCEPT) "
-                "MATCH (overlay:StudentOverlay {user_id: $student_id, concept_id: c.id}) "
-                "WHERE overlay.mastery_probability >= 0.7 "
-                "WITH module, total_concepts, COUNT(overlay) as mastered_concepts "
-                "WHERE mastered_concepts = total_concepts "
-                "AND NOT EXISTS("
-                "  MATCH (student:User {id: $student_id})-[:EARNED]->(ach:Achievement "
-                "       {achievement_type: 'module_complete', module_id: module.id}) "
-                ") "
-                "RETURN module.id as module_id "
-                "LIMIT 1"
-            )
+            # Find modules where all concepts are mastered (>= 0.7)
+            overlays = self.graph_manager.get_all_student_overlays(student_id)
             
-            result = self.graph_manager.db.run_query(
-                query,
-                {"student_id": student_id}
-            )
+            # Group overlays by module
+            module_concepts = {}  # module_id -> {concept_id -> mastery}
             
-            if result:
-                module_id = result[0].get("module_id")
-                return Achievement(
-                    student_id=student_id,
-                    achievement_type="module_complete",
-                    module_id=module_id,
-                    concept_id=None
+            for overlay in overlays:
+                concept_id = overlay.get('concept_id')
+                if not concept_id:
+                    continue
+                
+                concept = self.graph_manager.get_concept_by_id(concept_id)
+                if not concept:
+                    continue
+                
+                topic_id = concept.get('topic_id')
+                if not topic_id:
+                    continue
+                
+                topic = self.graph_manager.get_node_by_id(topic_id)
+                if not topic:
+                    continue
+                
+                module_id = topic.get('module_id')
+                if not module_id:
+                    continue
+                
+                if module_id not in module_concepts:
+                    module_concepts[module_id] = {}
+                
+                mastery = overlay.get('mastery_probability', 0.0)
+                module_concepts[module_id][concept_id] = mastery
+            
+            # Check which modules are fully mastered
+            for module_id, concept_masteries in module_concepts.items():
+                all_mastered = all(
+                    mastery >= 0.7 
+                    for mastery in concept_masteries.values()
                 )
+                
+                if all_mastered and not self.graph_manager.has_achievement(
+                    student_id, 'module_complete', module_id=module_id
+                ):
+                    return Achievement(
+                        student_id=student_id,
+                        achievement_type="module_complete",
+                        module_id=module_id,
+                        concept_id=None
+                    )
             
             return None
             
@@ -308,37 +330,23 @@ class GamificationAgent:
         """
         try:
             import uuid
-            achievement.achievement_id = str(uuid.uuid4())[:12]
+            achievement_id = str(uuid.uuid4())[:12]
             
-            # Create achievement node and link to student
-            query = (
-                "MATCH (student:User {id: $student_id}) "
-                "CREATE (ach:Achievement {"
-                "  id: $achievement_id,"
-                "  achievement_type: $achievement_type,"
-                "  concept_id: $concept_id,"
-                "  module_id: $module_id,"
-                "  earned_at: $earned_at,"
-                "  private: true"
-                "}) "
-                "CREATE (student)-[:EARNED]->(ach) "
-                "RETURN ach"
-            )
-            
-            result = self.graph_manager.db.run_query(
-                query,
+            # Create achievement in GraphManager
+            result = self.graph_manager.create_achievement(
+                achievement.student_id,
                 {
-                    "student_id": achievement.student_id,
-                    "achievement_id": achievement.achievement_id,
-                    "achievement_type": achievement.achievement_type,
-                    "concept_id": achievement.concept_id,
-                    "module_id": achievement.module_id,
-                    "earned_at": achievement.earned_at
+                    'id': achievement_id,
+                    'achievement_type': achievement.achievement_type,
+                    'concept_id': achievement.concept_id,
+                    'module_id': achievement.module_id,
+                    'earned_at': achievement.earned_at,
+                    'private': True
                 }
             )
             
-            if result:
-                logger.info(f"Achievement written: {achievement.achievement_id}")
+            if result.get('status') == 'success':
+                logger.info(f"Achievement written: {achievement_id}")
                 return True
             
             return False
@@ -354,27 +362,24 @@ class GamificationAgent:
         """
         Get all achievements for a student (private).
         
+        Uses GraphManager to retrieve achievements from JSON persistence.
+        
         Args:
             student_id: Student user ID
         
         Returns:
-            List of achievement dicts
+            List of achievement dicts sorted by earned_at (newest first)
         """
         try:
-            query = (
-                "MATCH (student:User {id: $student_id})-[:EARNED]->(ach:Achievement) "
-                "RETURN ach.id as id, ach.achievement_type as type, "
-                "       ach.concept_id as concept_id, ach.module_id as module_id, "
-                "       ach.earned_at as earned_at "
-                "ORDER BY ach.earned_at DESC"
-            )
+            # Use GraphManager method to get student achievements
+            achievements = self.graph_manager.get_student_achievements(student_id)
             
-            result = self.graph_manager.db.run_query(
-                query,
-                {"student_id": student_id}
+            # Sort by earned_at descending (newest first)
+            return sorted(
+                achievements,
+                key=lambda x: x.get('earned_at', ''),
+                reverse=True
             )
-            
-            return result if result else []
             
         except Exception as e:
             logger.warning(f"Achievement retrieval error: {str(e)}")

@@ -4,17 +4,18 @@ Post-evaluation agent for updating student knowledge state via Bayesian Knowledg
 
 Features:
 - Runs after every evaluation interaction
-- Reads concept difficulty from Neo4j
+- Reads concept difficulty from RustWorkX graph
 - Calls bayesian_update() with student response outcome
 - Writes updated theta and slip parameters back to StudentOverlay
 """
 
 import logging
+import os
 from typing import Optional
 
 from backend.agents.state import AgentState
 from backend.services.cognitive_engine import CognitiveEngine
-from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -37,26 +38,20 @@ class CognitiveEngineAgent:
     TA Agent → Student learns → Evaluator Agent → Cognitive Engine Agent → Updated overlay
     """
     
-    def __init__(self, neo4j_uri: Optional[str] = None,
-                 neo4j_user: Optional[str] = None,
-                 neo4j_password: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None):
         """
         Initialize Cognitive Engine Agent.
         
         Args:
-            neo4j_uri: Neo4j database URI
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
+            data_dir: Path to data directory for graph persistence
         """
-        import os
         from dotenv import load_dotenv
         
         load_dotenv()
         
-        self.graph_manager = Neo4jGraphManager(
-            uri=neo4j_uri or os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=neo4j_user or os.getenv("NEO4J_USER", "neo4j"),
-            password=neo4j_password or os.getenv("NEO4J_PASSWORD", "password")
+        # Use GraphManager which uses RustWorkX backend
+        self.graph_manager = GraphManager(
+            data_dir=data_dir or os.getenv("DATA_DIR", "data")
         )
         
         self.cognitive_engine = CognitiveEngine()
@@ -208,7 +203,7 @@ class CognitiveEngineAgent:
         Update StudentOverlay for a concept using Bayesian Knowledge Tracing.
         
         Process:
-        1. Read current StudentOverlay (theta, slip)
+        1. Get or create StudentOverlay (theta, slip)
         2. Read concept difficulty
         3. Determine if response was correct (quality > 0.7)
         4. Call bayesian_update()
@@ -224,40 +219,34 @@ class CognitiveEngineAgent:
             Success status
         """
         try:
-            # Step 1: Read current overlay
-            overlay_query = (
-                "MATCH (s:StudentOverlay {user_id: $user_id, concept_id: $concept_id}) "
-                "RETURN s.theta as theta, s.slip as slip"
-            )
+            # Step 1: Get current overlay for this student-concept pair
+            overlay = self.graph_manager.get_student_overlay(student_id, concept_id)
             
-            overlay_result = self.graph_manager.db.run_query(
-                overlay_query,
-                {"user_id": student_id, "concept_id": concept_id}
-            )
+            # If overlay doesn't exist, create it with defaults
+            if not overlay:
+                logger.debug(f"Creating new StudentOverlay for {student_id}/{concept_id}")
+                result = self.graph_manager.create_student_overlay(
+                    user_id=student_id,
+                    concept_id=concept_id,
+                    theta=0.0,
+                    slip=0.1,
+                    guess=0.1,
+                    visited=False
+                )
+                if result.get('status') != 'success':
+                    logger.warning(f"Failed to create StudentOverlay for {student_id}/{concept_id}")
+                    return False
+                overlay = self.graph_manager.get_student_overlay(student_id, concept_id)
             
-            if not overlay_result:
-                logger.warning(f"StudentOverlay not found for {student_id}/{concept_id}")
-                return False
+            overlay_id = overlay.get('id')
+            current_theta = overlay.get('theta', 0.0)
+            current_slip = overlay.get('slip', 0.1)
             
-            current_theta = overlay_result[0].get("theta", 0.0)
-            current_slip = overlay_result[0].get("slip", 0.1)
+            # Step 2: Get concept difficulty from GraphManager
+            concept = self.graph_manager.get_concept_by_id(concept_id)
+            concept_difficulty = concept.get('difficulty', -0.5) if concept else -0.5
             
-            # Step 2: Read concept difficulty
-            concept_query = (
-                "MATCH (c:CONCEPT {id: $concept_id}) "
-                "RETURN c.difficulty as difficulty"
-            )
-            
-            concept_result = self.graph_manager.db.run_query(
-                concept_query,
-                {"concept_id": concept_id}
-            )
-            
-            # Default difficulty to -0.5 (medium)
-            concept_difficulty = concept_result[0].get("difficulty", -0.5) if concept_result else -0.5
-            
-            # Step 3: Determine correctness
-            # Use quality threshold: > 0.7 = correct
+            # Step 3: Determine correctness from response quality
             answered_correctly = response_quality > 0.7
             
             logger.debug(f"Updating {concept_id}: theta={current_theta:.2f}, "
@@ -273,32 +262,19 @@ class CognitiveEngineAgent:
             )
             
             # Step 5: Recompute mastery probability
-            # Using IRT: P(correct) = 1 / (1 + exp(-a * (theta - b)))
-            # For simplified mastery: just use new theta clamped to [0, 1]
             new_mastery = max(0.0, min(1.0, new_theta))
             
-            # Step 6: Write back to Neo4j
-            update_query = (
-                "MATCH (s:StudentOverlay {user_id: $user_id, concept_id: $concept_id}) "
-                "SET s.theta = $new_theta, "
-                "    s.slip = $new_slip, "
-                "    s.mastery_probability = $new_mastery, "
-                "    s.last_updated = datetime() "
-                "RETURN s"
-            )
-            
-            update_result = self.graph_manager.db.run_query(
-                update_query,
-                {
-                    "user_id": student_id,
-                    "concept_id": concept_id,
-                    "new_theta": new_theta,
-                    "new_slip": new_slip,
-                    "new_mastery": new_mastery
+            # Step 6: Update the overlay using GraphManager update_student_overlay
+            result = self.graph_manager.update_student_overlay(
+                overlay_id,
+                updates={
+                    'theta': new_theta,
+                    'slip': new_slip,
+                    'mastery_probability': new_mastery
                 }
             )
             
-            if update_result:
+            if result.get('status') == 'success':
                 logger.info(f"Updated {concept_id}: "
                            f"theta {current_theta:.2f}→{new_theta:.2f}, "
                            f"slip {current_slip:.3f}→{new_slip:.3f}, "

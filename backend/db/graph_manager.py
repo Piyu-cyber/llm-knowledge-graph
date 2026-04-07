@@ -632,29 +632,72 @@ class GraphManager:
         return None
     
     def update_student_overlay(self, overlay_id: str, 
+                              updates: Optional[Dict] = None,
                               theta: Optional[float] = None,
                               mastery_probability: Optional[float] = None,
                               visited: Optional[bool] = None) -> Dict:
-        """Update a student overlay"""
+        """Update a student overlay
+        
+        Can be called with either:
+        - update_student_overlay(id, updates={...})
+        - update_student_overlay(id, theta=..., mastery_probability=..., visited=...)
+        """
         if overlay_id not in self.nodes_data:
             return {"status": "error", "message": "Overlay not found"}
         
         node_data = self.nodes_data[overlay_id]
         
-        if theta is not None:
-            node_data['theta'] = max(-4.0, min(4.0, float(theta)))
-        if mastery_probability is not None:
-            node_data['mastery_probability'] = max(0.0, min(1.0, mastery_probability))
-        elif theta is not None:
-            node_data['mastery_probability'] = self._theta_to_mastery_probability(node_data['theta'])
-        if visited is not None:
-            node_data['visited'] = visited
+        # Support both calling patterns
+        if updates:
+            # Dict-based update
+            if 'theta' in updates:
+                node_data['theta'] = max(-4.0, min(4.0, float(updates['theta'])))
+            if 'slip' in updates:
+                node_data['slip'] = updates['slip']
+            if 'mastery_probability' in updates:
+                node_data['mastery_probability'] = max(0.0, min(1.0, updates['mastery_probability']))
+            if 'visited' in updates:
+                node_data['visited'] = updates['visited']
+        else:
+            # Individual parameter updates
+            if theta is not None:
+                node_data['theta'] = max(-4.0, min(4.0, float(theta)))
+            if mastery_probability is not None:
+                node_data['mastery_probability'] = max(0.0, min(1.0, mastery_probability))
+            elif theta is not None:
+                node_data['mastery_probability'] = self._theta_to_mastery_probability(node_data['theta'])
+            if visited is not None:
+                node_data['visited'] = visited
         
         node_data['last_updated'] = datetime.now().isoformat()
         
         self._save_graph()
         
         return {"status": "success", "overlay_id": overlay_id}
+    
+    def remove_student_overlay(self, student_id: str, concept_id: str) -> Dict:
+        """Remove a student overlay for a concept"""
+        try:
+            overlay = self.get_student_overlay(student_id, concept_id)
+            if not overlay:
+                return {"status": "error", "message": "Overlay not found"}
+            
+            overlay_id = overlay.get('id')
+            if overlay_id in self.nodes_data:
+                del self.nodes_data[overlay_id]
+                # Also remove from rustworkx graph
+                if overlay_id in self.node_index_by_id:
+                    node_idx = self.node_index_by_id[overlay_id]
+                    del self.node_index_by_id[overlay_id]
+                    # rustworkx.remove_node_from_index() would go here if available
+                
+                self._save_graph()
+                return {"status": "success", "removed_overlay_id": overlay_id}
+            
+            return {"status": "error", "message": "Failed to remove overlay"}
+        except Exception as e:
+            logger.error(f"Failed to remove student overlay: {str(e)}")
+            return {"status": "error", "message": str(e)}
     
     # ==================== Semantic Memory Operations ====================
     
@@ -1079,6 +1122,114 @@ class GraphManager:
             if pred_id in self.nodes_data:
                 results.append({**self.nodes_data[pred_id], 'id': pred_id})
         return results
+    
+    # ==================== Additional Overlay Operations ====================
+    
+    def get_all_student_overlays(self, student_id: str) -> List[Dict]:
+        """Get all overlays for a student across all concepts"""
+        results = []
+        for node_id, node_data in self.nodes_data.items():
+            if node_data.get('user_id') == student_id and node_data.get('level') == 'StudentOverlay':
+                results.append({**node_data, 'id': node_id})
+        return results
+    
+    def get_least_confident_concept(self, student_id: str) -> Optional[str]:
+        """Get the concept with lowest mastery_probability for a student"""
+        overlays = self.get_all_student_overlays(student_id)
+        if not overlays:
+            return None
+        
+        # Find the one with lowest mastery
+        min_overlay = min(overlays, key=lambda x: x.get('mastery_probability', 1.0))
+        return min_overlay.get('concept_id')
+    
+    # ==================== Concept Lookup Operations ====================
+    
+    def get_concept_by_id(self, concept_id: str) -> Optional[Dict]:
+        """Get a concept node by ID"""
+        if concept_id in self.nodes_data:
+            node = self.nodes_data[concept_id]
+            if node.get('level') == 'CONCEPT':
+                return {**node, 'id': concept_id}
+        return None
+    
+    def get_concept_by_name(self, name: str, course_id: Optional[str] = None) -> Optional[Dict]:
+        """Get a concept node by name, optionally filtered by course"""
+        name_lower = name.lower()
+        for node_id, node_data in self.nodes_data.items():
+            if (node_data.get('level') == 'CONCEPT' and 
+                node_data.get('name', '').lower() == name_lower):
+                if course_id is None or node_data.get('course_owner') == course_id:
+                    return {**node_data, 'id': node_id}
+        return None
+    
+    # ==================== Achievement Operations ====================
+    
+    def _achievements_path(self) -> str:
+        return os.path.join(self.data_dir, "achievements.json")
+    
+    def create_achievement(self, student_id: str, achievement_dict: Dict) -> Dict:
+        """Create an achievement for a student"""
+        try:
+            achievements = self._read_json_list(self._achievements_path())
+            
+            achievement_id = achievement_dict.get('id') or f"ach_{uuid.uuid4().hex[:8]}"
+            
+            payload = {
+                'id': achievement_id,
+                'student_id': student_id,
+                'created_at': datetime.now().isoformat(),
+                **achievement_dict
+            }
+            
+            # Avoid duplicates
+            achievements = [a for a in achievements if not (
+                a.get('student_id') == student_id and 
+                a.get('achievement_type') == achievement_dict.get('achievement_type') and
+                a.get('concept_id') == achievement_dict.get('concept_id') and
+                a.get('module_id') == achievement_dict.get('module_id')
+            )]
+            
+            achievements.append(payload)
+            self._write_json_list(self._achievements_path(), achievements)
+            
+            return {'status': 'success', 'achievement_id': achievement_id}
+        except Exception as e:
+            logger.error(f"Failed to create achievement: {str(e)}")
+            return {'status': 'error', 'message': str(e)}
+    
+    def get_student_achievements(self, student_id: str) -> List[Dict]:
+        """Get all achievements for a student"""
+        achievements = self._read_json_list(self._achievements_path())
+        return [a for a in achievements if a.get('student_id') == student_id]
+    
+    def has_achievement(self, student_id: str, achievement_type: str, 
+                       concept_id: Optional[str] = None, 
+                       module_id: Optional[str] = None) -> bool:
+        """Check if student has earned a specific achievement"""
+        achievements = self.get_student_achievements(student_id)
+        for ach in achievements:
+            if ach.get('achievement_type') != achievement_type:
+                continue
+            if concept_id is not None and ach.get('concept_id') != concept_id:
+                continue
+            if module_id is not None and ach.get('module_id') != module_id:
+                continue
+            return True
+        return False
+    
+    # ==================== Enrollment Operations ====================
+    
+    def get_enrolled_students(self, course_id: str) -> List[str]:
+        """Get all student IDs enrolled in a course"""
+        students = set()
+        for node_id, node_data in self.nodes_data.items():
+            if (node_data.get('level') == 'StudentOverlay' and 
+                node_data.get('course_id') == course_id):
+                user_id = node_data.get('user_id')
+                if user_id:
+                    students.add(user_id)
+        return sorted(list(students))
     
     # ==================== Utility Methods ====================
     
