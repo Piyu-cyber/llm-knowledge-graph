@@ -58,7 +58,7 @@ class GamificationAgent:
     All achievements are stored in the local graph store and are private per student.
     """
     
-    def __init__(self, data_dir: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None, **kwargs):
         """
         Initialize Gamification Agent.
         

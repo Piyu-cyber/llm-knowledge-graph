@@ -1,115 +1,113 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { AuthApi, ProfessorApi, StudentApi } from "./endpoints";
+import StudentDashboard from "./StudentDashboard";
+import ProfessorDashboard from "./ProfessorDashboard";
 
 function parseJwt(token) {
   try {
     const payload = token.split(".")[1];
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const decoded = JSON.parse(atob(normalized));
-    return decoded;
+    return JSON.parse(atob(normalized));
   } catch {
     return null;
   }
 }
 
 function roleFromJwt(payload) {
-  if (!payload) return "unknown";
-  return payload.role || payload.user_role || "unknown";
+  if (!payload) return "Guest";
+  return payload.role || payload.user_role || "Guest";
 }
 
 export default function App() {
+  // --- STATE ---
+  const [devMode, setDevMode] = useState(false);
   const [apiBase, setApiBase] = useState(localStorage.getItem("omniprof_api_base") || "http://127.0.0.1:8000");
   const [token, setToken] = useState(localStorage.getItem("omniprof_token") || "");
   const [active, setActive] = useState("student");
   const [activity, setActivity] = useState([]);
-  const [chatMessage, setChatMessage] = useState("Explain recursion with a simple real-world example");
-  const [chatSession, setChatSession] = useState("sess_app_1");
-  const [chatCourse, setChatCourse] = useState("cs101");
-  const [chatHistory, setChatHistory] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  // Chat State
+  const [chatMessage, setChatMessage] = useState("");
+  const [chatSession, setChatSession] = useState("sess_app_1"); // Hidden by default
+  const [chatCourse, setChatCourse] = useState("cs101"); // Hidden by default
+  const [chatHistory, setChatHistory] = useState([
+    { role: "assistant", content: "Hi! I'm your OmniProf TA. How can I help you with your coursework today?" }
+  ]);
+
+  // Student State
   const [studentProgress, setStudentProgress] = useState(null);
   const [studentAchievements, setStudentAchievements] = useState([]);
   const [submissionFile, setSubmissionFile] = useState(null);
-  const [submissionIds, setSubmissionIds] = useState([]);
-  const [submissionLookupId, setSubmissionLookupId] = useState("");
   const [submissionStatus, setSubmissionStatus] = useState(null);
-  const [cohortOverview, setCohortOverview] = useState(null);
-  const [cohortStudents, setCohortStudents] = useState([]);
-  const [studentsList, setStudentsList] = useState([]);
-  const [selectedStudent, setSelectedStudent] = useState("");
-  const [hitlQueue, setHitlQueue] = useState([]);
+
+  // Professor State
   const [profCourse, setProfCourse] = useState("cs101");
-  const [graphData, setGraphData] = useState(null);
-  const [conceptId, setConceptId] = useState("");
-  const [conceptName, setConceptName] = useState("");
-  const [conceptDescription, setConceptDescription] = useState("");
-  const [conceptVisibility, setConceptVisibility] = useState("global");
-  const [conceptPriority, setConceptPriority] = useState(1);
-  const [learningPath, setLearningPath] = useState({ ordered_concept_ids: [], partial_order_edges: [] });
-  const [orderedIdsText, setOrderedIdsText] = useState("");
-  const [edgesText, setEdgesText] = useState("[]");
-  const [actionNote, setActionNote] = useState("Reviewed in dashboard");
-  const [busy, setBusy] = useState(false);
+  const [cohortOverview, setCohortOverview] = useState(null);
+  const [hitlQueue, setHitlQueue] = useState([]);
 
   const tokenPayload = useMemo(() => (token ? parseJwt(token) : null), [token]);
+  const role = roleFromJwt(tokenPayload);
+  const chatEndRef = useRef(null);
 
-  const saveBase = (value) => {
-    setApiBase(value);
-    localStorage.setItem("omniprof_api_base", value);
-  };
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatHistory]);
 
-  const saveToken = (value) => {
-    setToken(value);
-    localStorage.setItem("omniprof_token", value);
-  };
+  const saveBase = (val) => { setApiBase(val); localStorage.setItem("omniprof_api_base", val); };
+  const saveToken = (val) => { setToken(val); localStorage.setItem("omniprof_token", val); };
 
   const pushActivity = (entry) => {
-    setActivity((prev) => [{ ts: new Date().toISOString(), ...entry }, ...prev].slice(0, 30));
+    setActivity(prev => [{ ts: new Date().toISOString(), ...entry }, ...prev].slice(0, 50));
   };
 
   const quickLogin = async (username, password) => {
+    setBusy(true);
     try {
       const res = await AuthApi.login(apiBase, username, password);
-      if (res.data?.access_token) {
-        saveToken(res.data.access_token);
-      }
+      if (res.data?.access_token) saveToken(res.data.access_token);
       pushActivity({ endpoint: "/auth/login", status: res.status, ok: res.ok, method: "POST" });
     } catch {
       pushActivity({ endpoint: "/auth/login", status: 0, ok: false, method: "POST" });
+    } finally {
+      setBusy(false);
     }
   };
 
   const runStudentChat = async () => {
+    if (!chatMessage.trim()) return;
+    const msgToSend = chatMessage;
+    setChatMessage("");
+    setChatHistory(prev => [...prev, { role: "student", content: msgToSend }]);
     setBusy(true);
     try {
       const data = await StudentApi.chat(apiBase, token, {
-        message: chatMessage,
+        message: msgToSend,
         session_id: chatSession,
         course_id: chatCourse,
       });
-      setChatHistory((prev) => [
-        ...prev,
-        { role: "student", content: chatMessage },
-        { role: "assistant", content: data.data?.response || JSON.stringify(data.data) },
-      ]);
+      setChatHistory(prev => [...prev, { role: "assistant", content: data.data?.response || "Error getting response." }]);
       pushActivity({ endpoint: "/chat", status: data.status, ok: data.ok, method: "POST" });
+      // auto-refresh progress
+      loadStudentData();
     } finally {
       setBusy(false);
     }
   };
 
   const loadStudentData = async () => {
-    setBusy(true);
+    if (!token) return;
     try {
       const [progressRes, achievementsRes] = await Promise.all([
         StudentApi.progress(apiBase, token, chatCourse),
         StudentApi.achievements(apiBase, token),
       ]);
-      setStudentProgress(progressRes.data);
-      setStudentAchievements(progressRes.ok ? achievementsRes.data?.achievements || [] : []);
-      pushActivity({ endpoint: "/student/progress", status: progressRes.status, ok: progressRes.ok, method: "GET" });
-      pushActivity({ endpoint: "/student/achievements", status: achievementsRes.status, ok: achievementsRes.ok, method: "GET" });
-    } finally {
-      setBusy(false);
+      if (progressRes.ok) setStudentProgress(progressRes.data);
+      if (achievementsRes.ok) setStudentAchievements(achievementsRes.data?.achievements || []);
+    } catch {
+      // silent fail for standard users
     }
   };
 
@@ -118,24 +116,13 @@ export default function App() {
     setBusy(true);
     try {
       const res = await StudentApi.submitAssignment(apiBase, token, submissionFile, chatCourse);
-      const id = res.data?.submission_id;
-      if (id) {
-        setSubmissionIds((prev) => [id, ...prev].slice(0, 20));
-        setSubmissionLookupId(id);
+      if (res.ok) {
+        setSubmissionStatus({ status: "Submitted successfully!", id: res.data?.submission_id });
+        setSubmissionFile(null);
+      } else {
+        setSubmissionStatus({ status: "Failed to submit." });
       }
       pushActivity({ endpoint: "/student/submit-assignment", status: res.status, ok: res.ok, method: "POST" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const loadSubmissionStatus = async () => {
-    if (!submissionLookupId) return;
-    setBusy(true);
-    try {
-      const res = await StudentApi.submissionStatus(apiBase, token, submissionLookupId);
-      setSubmissionStatus(res.data);
-      pushActivity({ endpoint: "/student/submissions/{id}", status: res.status, ok: res.ok, method: "GET" });
     } finally {
       setBusy(false);
     }
@@ -144,273 +131,130 @@ export default function App() {
   const loadProfessorData = async () => {
     setBusy(true);
     try {
-      const [overviewRes, queueRes, cohortRes, studentsRes] = await Promise.all([
+      const [overviewRes, queueRes] = await Promise.all([
         ProfessorApi.cohortOverview(apiBase, token, profCourse, 7),
         ProfessorApi.hitlQueue(apiBase, token),
-        ProfessorApi.cohort(apiBase, token, profCourse),
-        ProfessorApi.students(apiBase, token),
       ]);
-      setCohortOverview(overviewRes.data);
-      setHitlQueue(queueRes.data?.items || []);
-      setCohortStudents(cohortRes.data?.students || []);
-      setStudentsList(studentsRes.data?.students || []);
-      pushActivity({ endpoint: "/professor/cohort-overview", status: overviewRes.status, ok: overviewRes.ok, method: "GET" });
-      pushActivity({ endpoint: "/professor/hitl-queue", status: queueRes.status, ok: queueRes.ok, method: "GET" });
+      if(overviewRes.ok) setCohortOverview(overviewRes.data);
+      if(queueRes.ok) setHitlQueue(queueRes.data?.items || []);
     } finally {
       setBusy(false);
     }
   };
 
-  const doHitlAction = async (queueId, action) => {
-    setBusy(true);
-    try {
-      const payload = { action, review_note: actionNote };
-      const res = await ProfessorApi.hitlAction(apiBase, token, queueId, payload);
-      pushActivity({ endpoint: "/professor/hitl-queue/{queue_id}/action", status: res.status, ok: res.ok, method: "POST" });
-      await loadProfessorData();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const loadGraphEditorData = async () => {
-    setBusy(true);
-    try {
-      const [graphRes, pathRes] = await Promise.all([
-        ProfessorApi.graphVisualization(apiBase, token, profCourse),
-        ProfessorApi.loadLearningPath(apiBase, token, profCourse),
-      ]);
-      setGraphData(graphRes.data);
-      const lp = pathRes.data || {};
-      setLearningPath(lp);
-      setOrderedIdsText((lp.ordered_concept_ids || []).join("\n"));
-      setEdgesText(JSON.stringify(lp.partial_order_edges || [], null, 2));
-      pushActivity({ endpoint: "/professor/graph-visualization", status: graphRes.status, ok: graphRes.ok, method: "GET" });
-      pushActivity({ endpoint: "/professor/learning-path", status: pathRes.status, ok: pathRes.ok, method: "GET" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveConcept = async () => {
-    if (!conceptId) return;
-    setBusy(true);
-    try {
-      const res = await ProfessorApi.updateConcept(apiBase, token, conceptId, {
-        name: conceptName || undefined,
-        description: conceptDescription || undefined,
-        visibility: conceptVisibility,
-        priority: Number(conceptPriority),
-      });
-      pushActivity({ endpoint: "/concept/{concept_id}", status: res.status, ok: res.ok, method: "PATCH" });
-      await loadGraphEditorData();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveLearningPath = async () => {
-    setBusy(true);
-    try {
-      let parsedEdges = [];
-      try {
-        parsedEdges = JSON.parse(edgesText || "[]");
-      } catch {
-        parsedEdges = [];
-      }
-      const payload = {
-        course_id: profCourse,
-        ordered_concept_ids: orderedIdsText.split("\n").map((x) => x.trim()).filter(Boolean),
-        partial_order_edges: Array.isArray(parsedEdges) ? parsedEdges : [],
-      };
-      const res = await ProfessorApi.saveLearningPath(apiBase, token, payload);
-      pushActivity({ endpoint: "/professor/learning-path", status: res.status, ok: res.ok, method: "POST" });
-      await loadGraphEditorData();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const role = roleFromJwt(tokenPayload);
-  const selectedStudentRow = cohortStudents.find((s) => s.student_id === selectedStudent);
+  // --- DERIVED DATA ---
   const mastery = studentProgress?.mastery || [];
-  const low = mastery.filter((m) => m.confidence_band === "low").length;
-  const medium = mastery.filter((m) => m.confidence_band === "medium").length;
-  const high = mastery.filter((m) => m.confidence_band === "high").length;
-  const total = Math.max(1, mastery.length);
+  const low = mastery.filter(m => m.confidence_band === "low").length;
+  const medium = mastery.filter(m => m.confidence_band === "medium").length;
+  const high = mastery.filter(m => m.confidence_band === "high").length;
+  const totalConcepts = Math.max(1, mastery.length) || 1;
 
   return (
-    <div className="app-shell">
-      <aside className="left-rail">
-        <h1>OmniProf Portal</h1>
-        <p className="muted">Role-first learning and teaching experience.</p>
-
-        <label>
-          <span>API Base URL</span>
-          <input value={apiBase} onChange={(e) => saveBase(e.target.value)} className="mono" />
-        </label>
-
-        <label>
-          <span>Bearer Token</span>
-          <textarea rows={5} value={token} onChange={(e) => saveToken(e.target.value)} className="mono" />
-        </label>
-
-        <div className="quick-login">
-          <button onClick={() => quickLogin("student_demo", "Student@123")}>Quick Login: Student</button>
-          <button onClick={() => quickLogin("professor_demo", "Professor@123")}>Quick Login: Professor</button>
-          <button onClick={() => saveToken("")}>Clear Token</button>
+    <div className="app-container">
+      {/* SIDEBAR */}
+      <aside className="sidebar">
+        <div className="brand">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+          OmniProf
         </div>
 
-        <div className="token-meta">
-          <p className="tiny">Decoded JWT</p>
-          <pre>{JSON.stringify(tokenPayload, null, 2) || "No token"}</pre>
-        </div>
-
-        <nav>
-          <button className={active === "student" ? "nav-btn active" : "nav-btn"} onClick={() => setActive("student")}>Student Dashboard</button>
-          <button className={active === "professor" ? "nav-btn active" : "nav-btn"} onClick={() => setActive("professor")}>Professor Dashboard</button>
+        <nav className="nav-menu">
+          {(role === "student" || role === "Guest" || role === "admin") && (
+            <button className={`nav-item ${active === "student" ? "active" : ""}`} onClick={() => setActive("student")}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+              Student Workspace
+            </button>
+          )}
+          {(role === "professor" || role === "Guest" || role === "admin") && (
+            <button className={`nav-item ${active === "professor" ? "active" : ""}`} onClick={() => setActive("professor")}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+              Professor Tools
+            </button>
+          )}
         </nav>
-        <p className="tiny tag">JWT Role: {role}</p>
+
+        <div className="sidebar-footer">
+          <div className="role-badge">Logged in as: {role}</div>
+          {!token ? (
+            <>
+              <button className="auth-button primary" onClick={() => quickLogin("student_demo", "Student@123")} disabled={busy}>Sign in to Student</button>
+              <button className="auth-button" onClick={() => quickLogin("professor_demo", "Professor@123")} disabled={busy}>Sign in to Professor</button>
+            </>
+          ) : (
+            <button className="auth-button" onClick={() => saveToken("")}>Sign Out</button>
+          )}
+
+          <button className="dev-mode-toggle" title="Developer Settings" onClick={() => setDevMode(!devMode)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.8.97 1.48 1h.11a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          </button>
+        </div>
       </aside>
 
-      <main className="main-panel">
-        <header className="hero card">
-          <p className="eyebrow">OmniProf Frontend</p>
-          <h2>{active === "student" ? "Student Learning Dashboard" : "Professor Teaching Dashboard"}</h2>
-          <p>
-            {active === "student"
-              ? "Chat with your TA agent, track mastery bands, monitor submissions, and celebrate achievements."
-              : "Review HITL queues, understand cohort health, drill into student progress, and manage graph/learning path controls."}
-          </p>
+      {/* MAIN CONTENT */}
+      <main className="main-content">
+        {devMode && (
+          <div className="dev-banner">
+            Developer Mode Active. Internal configurations and API settings are exposed below.
+          </div>
+        )}
+
+        <header className="header">
+          <h1>{active === "student" ? "Welcome back." : "Professor Dashboard"}</h1>
+          <p>{active === "student" ? "Your AI Teaching Assistant is ready to help." : "Manage your cohort and human-in-the-loop queue."}</p>
         </header>
 
-        {active === "student" && (
-          <section className="card app-grid">
-            <article className="app-pane">
-              <h3>Chat Journey</h3>
-              <div className="field-grid">
-                <label><span>Session</span><input value={chatSession} onChange={(e) => setChatSession(e.target.value)} /></label>
-                <label><span>Course</span><input value={chatCourse} onChange={(e) => setChatCourse(e.target.value)} /></label>
+        {(active === "student" || active === "professor") && devMode && (
+          <div className="header" style={{paddingTop: 0, paddingBottom: 0}}>
+            <div className="dev-panel">
+              <h4>API Configuration</h4>
+              <div className="field-group">
+                <label>API Base URL</label>
+                <input value={apiBase} onChange={(e) => saveBase(e.target.value)} />
               </div>
-              <label>
-                <span>Message</span>
-                <textarea rows={4} value={chatMessage} onChange={(e) => setChatMessage(e.target.value)} />
-              </label>
-              <div className="button-row">
-                <button className="btn-primary" onClick={runStudentChat} disabled={busy}>Send</button>
-                <button onClick={loadStudentData} disabled={busy}>Refresh Progress + Achievements</button>
+              <div className="field-group">
+                <label>Active JWT Token</label>
+                <textarea rows="3" value={token} onChange={(e) => saveToken(e.target.value)} placeholder="eyJh..." />
               </div>
-              <div className="chat-window">
-                {chatHistory.map((m, i) => (
-                  <p key={`${m.role}-${i}`} className={m.role === "assistant" ? "assistant-line" : "student-line"}>
-                    <strong>{m.role}:</strong> {m.content}
-                  </p>
-                ))}
-                {chatHistory.length === 0 && <p className="muted">No messages yet.</p>}
-              </div>
-            </article>
-            <article className="app-pane">
-              <h3>Progress Bands</h3>
-              <div className="progress-bars">
-                <div><span>Low</span><progress max={total} value={low} /><strong>{low}</strong></div>
-                <div><span>Medium</span><progress max={total} value={medium} /><strong>{medium}</strong></div>
-                <div><span>High</span><progress max={total} value={high} /><strong>{high}</strong></div>
-              </div>
-              <pre>{studentProgress ? JSON.stringify(studentProgress, null, 2) : "Load progress to view data."}</pre>
-
-              <h3>Submissions & Defence</h3>
-              <label><span>Upload Assignment</span><input type="file" onChange={(e) => setSubmissionFile(e.target.files?.[0] || null)} /></label>
-              <div className="button-row">
-                <button onClick={submitAssignment} disabled={busy || !submissionFile}>Submit</button>
-              </div>
-              <label><span>Check Submission ID</span><input value={submissionLookupId} onChange={(e) => setSubmissionLookupId(e.target.value)} /></label>
-              <div className="button-row">
-                <button onClick={loadSubmissionStatus} disabled={busy || !submissionLookupId}>Refresh Status</button>
-              </div>
-              {submissionIds.length > 0 && <p className="tiny">Recent IDs: {submissionIds.join(", ")}</p>}
-              <pre>{submissionStatus ? JSON.stringify(submissionStatus, null, 2) : "No submission status loaded."}</pre>
-
-              <h3>Achievements Feed</h3>
-              <pre>{JSON.stringify(studentAchievements, null, 2)}</pre>
-            </article>
-          </section>
-        )}
-
-        {active === "professor" && (
-          <section className="card app-grid">
-            <article className="app-pane">
-              <h3>Cohort Analytics + Drill-down</h3>
-              <label><span>Course ID</span><input value={profCourse} onChange={(e) => setProfCourse(e.target.value)} /></label>
-              <div className="button-row">
-                <button className="btn-primary" onClick={loadProfessorData} disabled={busy}>Refresh Professor Data</button>
-                <button onClick={loadGraphEditorData} disabled={busy}>Load Graph + Learning Path</button>
-              </div>
-              <pre>{cohortOverview ? JSON.stringify(cohortOverview, null, 2) : "No cohort data loaded yet."}</pre>
-              <label>
-                <span>Student Drill-down</span>
-                <select value={selectedStudent} onChange={(e) => setSelectedStudent(e.target.value)}>
-                  <option value="">Select student</option>
-                  {cohortStudents.map((s) => <option key={s.student_id} value={s.student_id}>{s.student_id}</option>)}
-                </select>
-              </label>
-              <pre>{selectedStudentRow ? JSON.stringify(selectedStudentRow, null, 2) : "Select a student to inspect concept mastery and struggles."}</pre>
-              <p className="tiny">Student roster: {studentsList.join(", ") || "None loaded"}</p>
-            </article>
-            <article className="app-pane">
-              <h3>HITL Queue Workflow</h3>
-              <label><span>Review Note</span><input value={actionNote} onChange={(e) => setActionNote(e.target.value)} /></label>
-              {hitlQueue.length === 0 && <p className="muted">No queue items.</p>}
-              {hitlQueue.map((item) => (
-                <div key={item.queue_id || Math.random()} className="queue-card">
-                  <p><strong>Queue ID:</strong> {item.queue_id}</p>
-                  <p><strong>Student:</strong> {item.student_id}</p>
-                  <p><strong>AI Grade:</strong> {item.ai_recommended_grade}</p>
-                  <div className="button-row">
-                    <button onClick={() => doHitlAction(item.queue_id, "approve")} disabled={busy}>Approve</button>
-                    <button onClick={() => doHitlAction(item.queue_id, "modify_approve")} disabled={busy}>Modify + Approve</button>
-                    <button onClick={() => doHitlAction(item.queue_id, "reject_second_defence")} disabled={busy}>Reject</button>
-                  </div>
+              
+              <h4>Session Overrides</h4>
+              <div style={{display: 'flex', gap: '1rem', marginBottom: '1rem'}}>
+                <div style={{flex: 1}}>
+                  <label style={{fontSize: '0.85rem', display:'block', marginBottom:'0.5rem'}}>Course ID</label>
+                  <input value={active==="student"?chatCourse:profCourse} onChange={(e) => active==="student"?setChatCourse(e.target.value):setProfCourse(e.target.value)} />
                 </div>
-              ))}
-
-              <h3>Graph Editor UX</h3>
-              <label><span>Concept ID</span><input value={conceptId} onChange={(e) => setConceptId(e.target.value)} /></label>
-              <label><span>Name</span><input value={conceptName} onChange={(e) => setConceptName(e.target.value)} /></label>
-              <label><span>Description</span><textarea rows={3} value={conceptDescription} onChange={(e) => setConceptDescription(e.target.value)} /></label>
-              <div className="field-grid">
-                <label>
-                  <span>Visibility</span>
-                  <select value={conceptVisibility} onChange={(e) => setConceptVisibility(e.target.value)}>
-                    <option value="global">global</option>
-                    <option value="enrolled-only">enrolled-only</option>
-                    <option value="professor-only">professor-only</option>
-                  </select>
-                </label>
-                <label><span>Priority</span><input type="number" value={conceptPriority} onChange={(e) => setConceptPriority(e.target.value)} /></label>
+                {active==="student" && (
+                  <div style={{flex: 1}}>
+                    <label style={{fontSize: '0.85rem', display:'block', marginBottom:'0.5rem'}}>Session ID</label>
+                    <input value={chatSession} onChange={(e) => setChatSession(e.target.value)} />
+                  </div>
+                )}
               </div>
-              <button onClick={saveConcept} disabled={busy || !conceptId}>Save Concept Changes</button>
-              <pre>{graphData ? JSON.stringify(graphData, null, 2) : "Load graph data to visualize editable concept targets."}</pre>
-
-              <h3>Learning Path Manager</h3>
-              <label><span>Ordered Concept IDs (newline separated)</span><textarea rows={4} value={orderedIdsText} onChange={(e) => setOrderedIdsText(e.target.value)} /></label>
-              <label><span>Partial Order Edges (JSON)</span><textarea rows={5} value={edgesText} onChange={(e) => setEdgesText(e.target.value)} className="mono" /></label>
-              <button onClick={saveLearningPath} disabled={busy}>Save Learning Path</button>
-              <pre>{JSON.stringify(learningPath, null, 2)}</pre>
-            </article>
-          </section>
+            </div>
+          </div>
         )}
 
-        <section className="card activity-log">
-          <h3>Recent Calls</h3>
-          <div className="activity-list">
-            {activity.length === 0 && <p className="muted">No calls yet.</p>}
-            {activity.map((item, idx) => (
-              <p key={`${item.ts}-${idx}`} className={item.ok ? "ok" : "bad"}>
-                {item.method} {item.endpoint} to {item.status} ({new Date(item.ts).toLocaleTimeString()})
-              </p>
-            ))}
-          </div>
-        </section>
+        {/* STUDENT DASHBOARD */}
+        {active === "student" && role !== "professor" && (
+          <StudentDashboard 
+            apiBase={apiBase} 
+            token={token} 
+            chatCourse={chatCourse} 
+            chatSession={chatSession} 
+            devMode={devMode} 
+            pushActivity={pushActivity} 
+          />
+        )}
+
+        {/* PROFESSOR DASHBOARD */}
+        {active === "professor" && (
+          <ProfessorDashboard 
+            apiBase={apiBase} 
+            token={token} 
+            profCourse={profCourse} 
+            devMode={devMode} 
+            pushActivity={pushActivity} 
+          />
+        )}
       </main>
     </div>
   );

@@ -40,7 +40,7 @@ class CurriculumAgent:
     Runs as background task to avoid blocking professor's update.
     """
     
-    def __init__(self, data_dir: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None, **kwargs):
         """
         Initialize Curriculum Agent.
         

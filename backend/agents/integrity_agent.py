@@ -75,7 +75,8 @@ class IntegrityAgent:
     def __init__(self, neo4j_uri: Optional[str] = None,
                  neo4j_user: Optional[str] = None,
                  neo4j_password: Optional[str] = None,
-                 min_token_threshold: Optional[int] = None):
+                 min_token_threshold: Optional[int] = None,
+                 **kwargs):
         """
         Initialize Integrity Agent.
         

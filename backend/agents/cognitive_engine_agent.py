@@ -38,7 +38,7 @@ class CognitiveEngineAgent:
     TA Agent → Student learns → Evaluator Agent → Cognitive Engine Agent → Updated overlay
     """
     
-    def __init__(self, data_dir: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None, **kwargs):
         """
         Initialize Cognitive Engine Agent.
         

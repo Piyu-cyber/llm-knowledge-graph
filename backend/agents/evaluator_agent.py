@@ -46,7 +46,8 @@ class EvaluatorAgent:
     
     def __init__(self,
                  groq_api_key: Optional[str] = None,
-                 data_dir: Optional[str] = None):
+                 data_dir: Optional[str] = None,
+                 **kwargs):
         """
         Initialize Evaluator Agent.
         

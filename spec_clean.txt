@@ -1,0 +1,336 @@
+OmniProf
+System Specification  —  Version 3.0
+Research & Engineering Grade
+————————————————————————————————————————
+Document Type
+System & Research Specification
+Version
+3.0 — Final
+Agent Framework
+LangGraph + LangChain
+Knowledge Layer
+Hierarchical Graph RAG + IRT Overlay
+Embeddings
+Jina Multimodal v3 (2048-dim)
+Inference Architecture
+Distributed LLM Mesh + Speculative Decoding
+Prepared
+March 2026
+Version 3.0 — Research Enhancements Summary
+This document supersedes v2.0. The following high-level advances have been integrated:
+Architecture: Transitioned from a fragile free-tier cloud-only model to a Distributed LLM Mesh with Speculative Decoding, achieving fault-tolerant, low-latency inference.
+Pedagogy: Replaced static per-node mastery scores with Probabilistic Knowledge Tracing (Item Response Theory) for precise, Bayesian cognitive modelling.
+Reliability: Replaced the passive retrieval strategy with Corrective RAG (CRAG) — a self-grading retrieval loop that eliminates hallucinations caused by irrelevant context.
+Memory: Extended the single temporal vector store to a Dual-Store architecture, separating episodic interaction history from a structured semantic knowledge base.
+Integrity: Added a Stylometric Analysis subsystem for real-time detection of AI-plagiarism and student impersonation during evaluation sessions.
+Introduction and Motivation
+The modern educational landscape is defined by two simultaneous, contradictory pressures. On one hand, digital platforms have scaled access to instruction to an unprecedented degree, enabling a single professor to serve hundreds of students across geographic and temporal boundaries. On the other hand, this same scaling has shattered the teacher-student relationship, making personalised mentorship operationally impossible at any meaningful class size. Educators are consumed by administrative overhead, repetitive query resolution, and static grading workflows, leaving little bandwidth for the high-leverage activities — deep feedback, conceptual coaching, individualised learning path design — that produce real educational outcomes.
+Simultaneously, the proliferation of Large Language Models accessible to students has fundamentally undermined traditional assessment models. Static document submissions — essays, project reports, code repositories — can no longer be treated as reliable indicators of individual understanding. Existing educational AI tools have failed to respond adequately to either challenge. They operate as stateless question-answering chatbots with no memory of prior interactions, no model of the student, and no capacity to evaluate process rather than output. A system that simply answers questions on demand does not transform education; it merely replicates a search engine with a conversational veneer.
+OmniProf addresses this failure mode directly. It is a state-aware, multi-role LLM agent system designed to orchestrate the end-to-end lifecycle of a course: from dynamic knowledge ingestion, through personalised 24/7 tutoring, to process-based conversational evaluation and human-in-the-loop grading. By combining Hierarchical Graph RAG, Bayesian cognitive modelling, and distributed inference, OmniProf functions as a genuine pedagogical force-multiplier — one that restores the educator’s capacity to operate at the level of mentorship and institutional oversight rather than administrative throughput.
+Core Problem Statement
+The system solves a concrete engineering problem: how to design a domain-agnostic, autonomous agent capable of dynamically ingesting arbitrary course materials and maintaining a persistent, evolving model of each student’s knowledge state — while simultaneously countering the adversarial conditions introduced by widespread student access to generative AI. The solution must be scalable, privacy-compliant, and architecturally robust under real-world concurrency constraints.
+Chapter 1: Revised System Philosophy
+1.1 Core Architectural Principles
+Version 2.0 identified the central insight that a course is a graph. Concepts have prerequisite relationships; topics nest inside modules; a student’s understanding of one node directly affects their traversal path through adjacent nodes. Version 3.0 preserves and extends this insight, consolidating the principles of the v2 architecture while resolving the critical weaknesses identified in the v2 Critical Assessment.
+The five foundational principles of the OmniProf architecture are as follows. First, one knowledge layer, multiple concerns: the Hierarchical Graph RAG is the single source of truth for course content, student progress anchoring, and access scope. Second, personalisation lives in the graph: student-specific nodes, edge weights, traversal histories, and probabilistic knowledge state estimates are first-class citizens of the graph schema. Third, access control is a graph property: node and subgraph ownership is expressed as metadata on graph entities and enforced at query time by filtering the traversable subgraph. Fourth, memory is stratified: conversation context is held in a dual-store architecture separating raw episodic sequences from structured semantic extractions. Fifth, the human is a first-class actor: the professor actively shapes the knowledge graph, defines learning trajectories, and retains final authority over all official credentialing.
+1.2 Design Constraints
+The following table defines the fixed constraints within which the OmniProf architecture operates. These constraints are non-negotiable for the initial deployment phase.
+Constraint
+Rationale and Specification
+Hybrid Inference Mesh
+The system supports a heterogeneous inference environment. While defaulting to free-tier cloud APIs (Groq, Cerebras, NVIDIA NIM), the architecture must also support local GPU inference (llama.cpp / Mistral-7B) and distributed worker nodes. This eliminates single-provider rate-limit failures as an existential risk.
+Latency SLA
+The system targets a Time-to-First-Token (TTFT) of under 500ms for all student-facing tutoring interactions. This is achieved through speculative decoding, local-first routing for utility tasks, and aggressive response caching for common queries.
+LangGraph + LangChain
+Agent orchestration and chain-building framework is fixed. All sub-agents must be provider-agnostic at the code level, using the LangChain LLM abstraction layer.
+Jina Multimodal Embeddings
+All embedding operations use Jina Multimodal v3 at 2048 dimensions for text, image, and diagram content, maintaining a unified semantic space across modalities.
+No Code in Specification
+This document defines what the system must do, not how it is coded. Implementation decisions are delegated to the engineering team within the constraints specified here.
+FERPA / GDPR Compliance
+All student data, interaction logs, and progress records must be encrypted at rest and in transit. Role-Based Access Control is enforced at the graph layer. No student data is accessible to peer students or to unenrolled parties.
+Chapter 2: Hierarchical Graph RAG — Architecture Specification
+2.1 Why Graph RAG Over Flat RAG
+Standard flat RAG splits documents into fixed-size chunks and retrieves them by cosine similarity. This approach is adequate for factual question-answering but structurally blind: it cannot distinguish between a foundational definition and an advanced application of the same term, cannot follow prerequisite chains, and cannot be scoped to a student’s current learning position without external machinery sitting outside the retrieval layer itself.
+Hierarchical Graph RAG addresses all three deficiencies. Knowledge is represented as a directed, weighted graph where nodes encode discrete knowledge units at varying granularities, edges encode semantic relationships between those units, node vectors provide both graph traversal and similarity search within a single 2048-dimensional Jina embedding space, and student overlays encode per-student mastery states as first-class graph properties.
+2.2 Graph Construction Pipeline
+2.2.1 Ingestion and LLM-Assisted Structuring
+Raw course material ingestion is a two-stage offline process. The first stage is format normalisation: PDFs, DOCX files, PPTX slides, video transcripts, and images are converted into modality-agnostic content units. The second stage — which distinguishes this architecture from flat RAG — is LLM-assisted graph extraction.
+Requirement G-1: 
+Graph Extraction Stage
+Before any content is stored in the knowledge graph, a dedicated extraction LLM call must be made on each content unit. This call instructs the LLM to identify the primary concept or topic, assign it to the correct hierarchy level (Module, Topic, Concept, or Fact), list all prerequisite concepts, list all concepts this unit extends, and identify any concepts explicitly contrasted. The output is a structured schema (concept name, level, relationships) that becomes the graph node definition.
+This extraction happens offline during ingestion, not at query time. An automated validation step checks all extraction outputs for prerequisite cycles, orphaned nodes, and duplicate concept names before writing to the canonical graph.
+2.2.2 Graph Hierarchy Levels
+The system enforces a strict four-level hierarchy for every course graph. Every node carries a unique identifier, its hierarchy level, its Jina 2048-dimensional embedding vector, its source document reference, and the professor-defined canonical name.
+Level
+Definition
+Example (ML Course)
+Module
+Top-level thematic grouping
+Supervised Learning
+Topic
+Distinct teachable unit within a module
+Decision Trees
+Concept
+A specific idea or mechanism within a topic
+Gini Impurity
+Fact
+An atomic claim, formula, or definition
+Gini = 1 - sum(pi^2)
+2.2.3 Multimodal Node Embeddings
+All nodes — regardless of whether their source content is text, a diagram, a slide image, or a mathematical formula — are embedded using Jina Multimodal v3 at 2048 dimensions. This ensures that a question about a diagram retrieves the correct graph node using vector similarity, even when the node’s canonical label is purely textual.
+Requirement G-2: 
+Uniform Embedding Space
+The system must not maintain separate vector indices for text and image content. All modalities are embedded into the same 2048-dimensional Jina space. A natural language query must be able to retrieve a graph node whose source was a diagram, and vice versa. There are no cross-modal retrieval bridges or index translation layers.
+2.3 RBAC Within the Graph
+Access control is expressed as graph-level metadata rather than as a separate identity management layer. This design decision eliminates the class of bugs that arise when the application-layer access check and the retrieval-layer query diverge.
+Requirement G-3: 
+Graph-Native Access Scoping
+Every graph node carries two access metadata fields: course_owner (the professor’s identifier) and visibility (one of: global, enrolled-only, or professor-only). At query time, the retrieval engine filters the traversable subgraph to only those nodes whose visibility is compatible with the requesting user’s role and enrolment status.
+A professor can mark certain nodes as private (e.g., answer keys, grading rubrics) and they will be structurally unreachable by student queries — not merely filtered in application logic, but absent from the traversal graph entirely.
+2.4 Cognitive Diagnostic Model (CDM) and Personalisation
+Static mastery scores on a 0.0–1.0 scale are pedagogically insufficient. They treat a student who answers a question incorrectly due to careless error identically to a student who has a genuine knowledge gap in a prerequisite concept. Version 3.0 replaces static scoring with a probabilistic Item Response Theory (IRT) engine implemented directly within the graph layer.
+Requirement G-4: 
+Probabilistic Knowledge Tracing
+Instead of a static mastery score, each student’s overlay maintains a probability distribution of competence per concept node, parameterised using IRT. Each Concept Node stores a static difficulty parameter derived from cohort performance history. The Student Overlay stores theta (student ability estimate) and slip (careless error probability).
+Upon each evaluation interaction, the system performs a Bayesian update of the student’s theta parameter. If a student answers a difficult question incorrectly but exhibits high mastery on all prerequisite nodes, the Cognitive Diagnostic Model diagnoses a Slip event rather than a Knowledge Gap, and does not penalise the student’s conceptual ability estimate accordingly.
+The TA Agent uses the resulting probability distribution to dynamically adjust explanation depth. Concept nodes with low probability estimates trigger Socratic questioning sequences designed to surface and correct the underlying misconception. High probability nodes trigger confirmation and advancement, pushing the student to adjacent higher-level concepts.
+2.5 Corrective RAG (CRAG) with Self-Reflection
+A key failure mode in any retrieval-augmented system is the generation of confident, plausible-sounding responses grounded in retrieved context that is technically irrelevant to the student’s actual question. Version 3.0 addresses this with a Corrective RAG loop: a multi-step agentic retrieval process that grades its own results before passing them to the generation stage.
+Requirement G-5: 
+Retrieval Self-Grading
+The retrieval process executes as a three-stage agentic loop before any generation occurs:
+Stage 1 — Retrieve: Fetch candidate context from the Graph RAG using the standard three-step vector seed, graph expansion, and context assembly pipeline.
+Stage 2 — Grade: A lightweight LLM call (executed on the local inference model to minimise latency and API cost) evaluates the relevance of the retrieved context against the student’s query and returns a scalar relevance score between 0 and 1.
+Stage 3 — Act: If the relevance score exceeds 0.7, the system proceeds directly to generation. If the score falls below 0.5, the Knowledge Expansion Tool is triggered — searching approved external academic sources or falling back to general LLM knowledge with an explicit Disclaimer warning appended to the response. If the score falls in the ambiguous range (0.5–0.7), the system generates a clarifying question to the student before proceeding.
+Chapter 3: Temporal Conversation Memory
+3.1 Dual-Store Memory Architecture
+Standard conversation memory implementations fall into two unsatisfactory categories. A fixed rolling window loses early-session context as the conversation grows. A full history dump exhausts the context window and treats an interaction from six weeks ago as equally salient as one from yesterday. Version 3.0 supersedes both approaches with a Dual-Store Memory System that mirrors the architectural separation found in human cognitive psychology.
+Requirement M-1: 
+Dual-Store Memory System
+Episodic Memory (the When): A temporal vector store (FAISS or Qdrant) retaining the raw chronological sequence of student interactions. Each record contains: the message content embedding, the timestamp, the session identifier, the topic nodes active during the interaction, and a temporal relevance score. The relevance score decays over time, weighting recency more heavily than older interactions. This store is used for retrieving specific past events and providing chronological conversational continuity.
+Semantic Memory (the What): A structured extraction of facts and concepts learned by the student, maintained as a persistent knowledge base. The Summarisation Agent extracts entities and demonstrated understandings from aged conversation logs and writes them as Semantic Nodes directly into the student’s Knowledge Graph overlay. This Semantic Memory persists even after raw conversation logs decay or are archived, providing a durable record of what the student knows independent of the episodic interaction history.
+3.2 Memory Anchor Summarisation
+When episodic interaction records age past the full-retention threshold, an asynchronous background process uses a lightweight LLM call to summarise the session into a Memory Anchor — a compact structured record that can be retrieved at query time without consuming the full context of the original exchange.
+Requirement M-2: 
+Memory Anchor Properties
+A memory anchor must capture: the session date range, the list of graph nodes actively discussed, the student’s assessed confidence per node at session end, any persistent misconceptions identified, and a summary text of the interaction. Memory anchors are indexed in the same temporal vector store as full interaction records but carry a lower maximum retrieval weight, preventing stale anchors from dominating over recent full-fidelity records.
+3.3 Context Window Assembly Priority
+At every agent invocation, the context window is assembled in a strict priority order. The current session’s full message history is included at highest priority with no decay applied. Temporally retrieved recent interaction records from prior sessions follow, weighted by the decay function. Memory anchors from older sessions are always included at a lower bound weight to maintain continuity. Graph RAG context retrieved for the current query provides the knowledge layer. Finally, the system prompt includes the student’s IRT-parameterised mastery overlay summary, providing the agent with the student’s current cognitive state across all concept nodes.
+The temporal decay function uses a hybrid approach: pure chronological decay for general context retrieval, combined with full retrieval weight for any interaction record whose active topic nodes match the current query’s graph seed nodes, regardless of how old the record is. This prevents the system from appearing amnesiac about a topic the student engaged with months ago when that topic resurfaces in a new session.
+Chapter 4: Agent Orchestration Specification
+4.1 LangGraph State Machine
+The OmniProf agent is implemented as a cyclic LangGraph state machine. The persistent state carries: the student profile reference (a pointer into the graph overlay), the current session’s message list, the active sub-agent identifier, the retrieved graph context, the current CRAG relevance score, and any in-progress evaluation state including the Bayesian knowledge tracing parameters being updated.
+4.1.1 Sub-Agent Roster
+The following table defines all sub-agents in the v3.0 orchestration layer, including three new agents introduced in this version to support the Corrective RAG loop, stylometric integrity checking, and Bayesian knowledge state updates.
+Sub-Agent
+Trigger Condition
+Core Responsibility
+TA Agent
+Default for all academic queries
+Grounded Q&A using personalised graph walk. Adapts explanation depth and questioning style to the student’s IRT-parameterised mastery overlay. Applies Socratic questioning for low-probability nodes.
+Evaluator Agent
+Student submits assignment or requests assessment
+Conducts multi-turn conversational defence. Probes process understanding rather than output correctness. Terminates when internal confidence score exceeds 0.9 or after a maximum of 10 turns.
+Grader Agent
+Post-retrieval (internal, not student-facing)
+Evaluates retrieved context relevance as part of the CRAG loop. Assigns a 0–1 relevance score and routes the pipeline accordingly. Filters hallucinations before generation occurs.
+Integrity Agent
+During evaluation sessions
+Computes Stylometric Deviation Scores by comparing the student’s current submission and defence responses against their historical writing fingerprint. Flags anomalous inputs for professor review.
+Cognitive Engine
+Post-evaluation (internal)
+Updates the Bayesian Knowledge Tracing parameters (theta, slip) in the student’s graph overlay based on the outcome of each evaluation interaction.
+Curriculum Agent
+Professor modifies topic scope or priority
+Re-weights graph edges per professor-defined learning path. Propagates changes to all active student overlays as a background job.
+Gamification Agent
+Triggered post-interaction by any sub-agent
+Evaluates milestone conditions against the student graph overlay. Awards private achievements without peer comparison.
+Summarisation Agent
+Background, asynchronous
+Converts aged episodic interaction records into memory anchors. Extracts semantic facts into the student’s Semantic Memory graph overlay. Runs entirely outside the real-time request path.
+4.1.2 Routing Logic
+The LangGraph entry point classifies incoming messages using a lightweight intent classifier executed on the local inference model. The classifier outputs one of four intent classes: academic_query, submission_defence, curriculum_change (professor-only), or progress_check. The graph routes to the corresponding sub-agent. For academic queries, the CRAG loop runs before the TA Agent generates a response. After each sub-agent completes, the Gamification Agent evaluates milestone conditions before the response is returned to the client.
+4.2 Distributed LLM Mesh and Speculative Decoding
+The single most critical architectural weakness identified in v2.0 was the existential risk posed by exclusive reliance on free-tier cloud inference APIs. Under real-world concurrency — a class of thirty students during an assignment deadline — all three cloud providers (Groq, Cerebras, NVIDIA NIM) could simultaneously exhaust their rate limits, causing complete system failure. Version 3.0 resolves this with a Distributed LLM Mesh that treats all inference endpoints as a unified, prioritised resource pool.
+Requirement L-1: 
+Heterogeneous Inference Mesh
+The system implements a custom LLMRouter that manages inference across three priority tiers:
+Priority 0 — Local Inference (Utility Tasks): Intent classification, memory summarisation, CRAG relevance grading, and other lightweight internal tasks run on a local llama.cpp instance (Mistral-7B or equivalent) to minimise API consumption and maximise throughput for low-stakes operations.
+Priority 1 — Cloud Inference (Complex Tasks): High-stakes student-facing tasks — TA Agent tutoring responses, Evaluator Agent defence sessions, and Curriculum Agent graph reasoning — route to Groq (primary), Cerebras (secondary), or NVIDIA NIM (tertiary) via cascading fallback.
+Failover Strategy: If all cloud providers return rate-limit errors simultaneously, the system automatically degrades to local inference with a user-visible notification of reduced mode. The system never fails silently; it always serves a response, even if at reduced quality.
+Requirement L-2: 
+Speculative Decoding
+To meet the 500ms TTFT latency target, the system employs speculative decoding for student-facing generation. The local small model (Draft Model) predicts a batch of candidate tokens, and the Cloud or Primary model (Verifier) validates the batch in parallel. Accepted tokens are surfaced to the user immediately; rejected tokens trigger a single corrective forward pass on the Verifier.
+This approach reduces user-perceived latency by approximately 40% on typical tutoring responses compared to sequential single-model generation, without any degradation in output quality as measured by the Verifier model.
+Chapter 5: Dual Dashboard Specification
+5.1 Overview
+Two independent user interfaces are required. They share the same backend API but serve fundamentally different user goals and must not be treated as a single interface with role-based tab toggling. The student dashboard is optimised for learning flow state; the professor dashboard is optimised for oversight, management, and credentialing authority.
+5.2 Student Dashboard
+The student dashboard is a focused, low-friction interface designed to keep the student in an uninterrupted learning flow. It must not expose system internals, graph structures, IRT parameters, or any comparative peer data.
+Requirement SD-1: 
+Conversational Interface
+A real-time chat interface backed by the LangGraph TA Agent. Supports text input and image or diagram upload, handled via Jina multimodal embedding. Responses stream token-by-token. The interface displays which course topic the agent is referencing, allowing the student to understand the knowledge context of each answer without exposing the underlying graph structure.
+Requirement SD-2: 
+Personal Progress Visualisation
+A private, individual-only progress view displaying: modules explored, concepts visited, mastery probability per concept (visualised as a confidence band rather than a raw score), and the current recommended learning trajectory based on the personalised graph walk. No peer comparison. No class rank. No leaderboard of any kind.
+Requirement SD-3: 
+Private Achievement Feed
+A personal feed of milestone achievements earned. Each achievement displays: the badge label, the date earned, and a one-line description of the triggering behaviour. Achievements are not visible to other students or to the professor, preventing gamification signals from influencing grade perception.
+Requirement SD-4: 
+Submission and Defence Interface
+A dedicated panel for submitting assignments and entering a conversational defence session. The interface must clearly indicate to the student that they are in an evaluation session and that the conversation will be reviewed by the professor. Students can view past defence transcripts and AI-drafted feedback, but cannot view the AI-recommended score until the professor has approved it.
+5.3 Professor Dashboard
+The professor dashboard is a management and oversight interface supporting simultaneous monitoring of many students and direct manipulation of the knowledge graph underpinning the course.
+Requirement PD-1: 
+Cohort Progress Overview
+An aggregate view of all enrolled students’ progress through the course knowledge graph. Displays: the distribution of mastery probabilities per topic across the cohort, concepts with the highest struggle rates (high slip parameter values), and students who have not engaged within a configurable period. Identifies systemic gaps in student understanding that may indicate poor teaching material rather than individual student failure.
+Requirement PD-2: 
+Individual Student Drill-Down
+The professor can select any individual student to inspect their personalised graph overlay: nodes visited, IRT-parameterised mastery estimates per concept, session history at the topic level, and all milestone achievements earned. The professor can annotate a student’s graph overlay with private notes.
+Requirement PD-3: 
+Knowledge Graph Editor
+A visual interface for the professor to view and modify the course knowledge graph. Required operations include: adding, removing, or renaming topic and concept nodes; adding, removing, or re-weighting edges; marking nodes as high-priority; marking nodes as out-of-scope for the current term; and uploading new course material to trigger incremental re-ingestion. When the professor modifies the graph, the Curriculum Agent propagates changes to all active student overlays as a background job.
+All graph edits are versioned with rollback support. Incremental re-ingestion updates only the affected subgraph, preserving student overlay data for unchanged nodes.
+Requirement PD-4: 
+HITL Evaluation Queue
+A structured queue of all AI-drafted evaluation records awaiting professor review. For each record, the professor sees: the original submission summary, the full defence transcript, the AI-recommended grade with justification, and the AI-generated feedback text. The professor can approve as-is, modify the score or feedback before approving, or reject and flag for a second defence session. No grade becomes official until approved here. This gate is architecturally enforced — the system has no pathway to record an official grade without professor approval.
+Requirement PD-5: 
+Learning Path Configuration
+The professor can define a recommended traversal path through the knowledge graph: an ordered or partially ordered sequence of topics that students are encouraged to follow. This path weights the Curriculum Agent’s recommendations and the TA Agent’s contextual emphasis. Students are guided toward this path when querying adjacent topics but are not forced onto it.
+Requirement PD-6: 
+Integrity and Anomaly Dashboard
+The Evaluation Queue displays an Integrity Score alongside the AI-recommended grade for every evaluated submission. The Integrity Score is a Style Deviation Index (0–100%) computed by the Integrity Agent, indicating how statistically different the student’s submission and defence responses are from their historical writing fingerprint, as established through prior interactions with the TA Agent.
+A Style Deviation Index exceeding 85% is automatically flagged with an Anomalous Input warning, surfacing the record at the top of the professor’s review queue with a recommendation to investigate potential AI-plagiarism or student impersonation before approving a grade.
+Chapter 6: System Architecture Summary
+6.1 Component Map
+Component
+Technology / Specification
+Agent Framework
+LangGraph + LangChain. Cyclic state machine, sub-agent routing, distributed checkpointing.
+Knowledge Store
+Graph DB (Neo4j or Kuzu) + Jina 2048-dim index. Hierarchical Graph RAG, student IRT overlays, RBAC.
+Conversation Memory
+Dual-store: Temporal vector store (FAISS/Qdrant) for episodic history + Semantic graph nodes for extracted knowledge.
+Inference Mesh
+LLMRouter managing: Local llama.cpp (Priority 0), Groq/Cerebras/NVIDIA NIM (Priority 1) with cascading fallback.
+Speculative Decoding
+Local Mistral-7B as Draft Model; Cloud primary as Verifier. Target: <500ms TTFT.
+Embeddings
+Jina Multimodal v3 (2048-dim) for all text, image, and diagram content.
+Integrity Engine
+Stylometric Deviation Index computed by the Integrity Agent per evaluation session.
+API Layer
+FastAPI (async). REST + WebSocket for both dashboards.
+Auth
+JWT-based, roles encoded in token. Student / Professor / Admin scoping.
+Background Jobs
+Async task queue. Memory summarisation, semantic extraction, graph re-weighting, overlay propagation.
+6.2 Data Flow: Student Query
+A student query passes through the following stages. The student sends a query via WebSocket; the JWT is validated and the student identity and enrolled course are extracted. The LangGraph state machine loads from the checkpoint store. The intent classifier (running on local inference) routes to the TA Agent. The CRAG loop executes: the system performs a personalised graph walk, grades the retrieved context, and either proceeds, triggers knowledge expansion, or generates a clarifying question. The assembled context — episodic memory, semantic memory anchors, graph context, and the IRT overlay summary — is passed to the inference LLM via the LLMRouter. The response streams to the student token-by-token. The graph overlay, IRT parameters, and episodic memory store are updated asynchronously. The Gamification Agent evaluates milestone conditions and writes any triggered achievements.
+6.3 Data Flow: Evaluation Session
+When a student submits an assignment and initiates a defence, the Integrity Agent establishes the session baseline by loading the student’s historical writing fingerprint from their interaction history. The Evaluator Agent conducts a multi-turn conversational defence, probing process understanding across the submission’s key concepts. After each student response, the Integrity Agent computes an incremental Style Deviation Index update. The Cognitive Engine updates IRT parameters after each exchange. The session terminates when the Evaluator’s internal confidence score exceeds 0.9 or after a maximum of ten turns. The complete defence transcript, AI-recommended grade, and Integrity Score are written to the HITL Evaluation Queue. No grade is recorded until the professor approves the record.
+Chapter 7: Phases of Delivery
+Phase
+Focus
+Deliverables and Acceptance Criteria
+1
+Infrastructure and Graph Schema (1–2 weeks)
+Graph DB running; schema defined for all node/edge types including IRT parameters; Jina embedding pipeline operational; JWT auth working; local llama.cpp instance serving inference.
+2
+Graph Ingestion Pipeline (1.5–2 weeks)
+LLM-assisted extraction generates correct hierarchy from sample PDFs; CRAG Grader Agent validates retrieval quality; automated graph validation catches cycles and orphaned nodes.
+3
+Personalised Graph Retrieval (1.5 weeks)
+Student overlay initialised on enrolment with IRT priors; mastery-weighted graph walk returns contextually appropriate results; RBAC filtering confirmed; Bayesian update cycle functional end-to-end.
+4
+Dual-Store Memory and Agent Core (2–2.5 weeks)
+LangGraph state machine routes correctly; temporal episodic store and semantic extraction both operational; TA Agent, Evaluator Agent, Integrity Agent, and Cognitive Engine functional end-to-end.
+5
+Dual Dashboard MVP (2 weeks)
+Student chat and progress view live; Professor HITL queue with Integrity Score display live; graph editor MVP operational; cohort overview shows real data.
+6
+Distributed Inference and Hardening (1.5 weeks)
+LLMRouter switching between local and cloud endpoints under load; speculative decoding achieving <500ms TTFT; cascading cloud fallback tested under rate-limit simulation; background summarisation stable.
+Chapter 8: Critical Assessment
+What follows is an honest evaluation of the OmniProf v3.0 design. Weaknesses identified in v2.0 are assessed against the mitigations introduced in this version. New risks introduced by the v3.0 additions are identified openly. The goal is not to diminish the project but to ensure that the engineering team enters implementation with clear eyes about where the architecture will be tested hardest.
+8.1 Addressed Weaknesses
+8.1.1 The Free-Tier LLM Constraint (Status: Resolved)
+The v2.0 assessment identified this as an existential architectural risk. A class of thirty students during an exam period could exhaust all three cloud providers simultaneously, causing complete system failure. The Distributed LLM Mesh introduced in Section 4.2 resolves this risk structurally. Local inference now handles all utility tasks — intent classification, CRAG grading, memory summarisation — decoupling throughput for internal operations from cloud API availability. Cloud providers handle only high-stakes student-facing generation. The cascading failover to local inference under rate-limit conditions ensures the system always serves a response. This moves the constraint from existential to manageable.
+8.1.2 Graph Construction Non-Determinism (Status: Mitigated)
+The LLM-assisted graph extraction step remains inherently non-deterministic. Two runs of the same prompt on the same document may produce graphs with different node names or edge sets. The Corrective RAG loop introduced in Section 2.5 provides a query-time mitigation: even if the graph is imperfect, the CRAG Grader Agent identifies when retrieved context is irrelevant and triggers knowledge expansion or a clarifying question. The automated graph validation step in Section 2.2.1 catches structural errors at ingestion time. The professor’s graph editor remains the primary mechanism for correcting extraction errors after initial ingestion. The risk is mitigated but not eliminated — graph extraction prompt engineering remains critical work.
+8.1.3 Defence Session Termination (Status: Resolved)
+The v2.0 specification left the Evaluator Agent’s termination criterion undefined. Section 4.1.1 now specifies a dual stopping condition: the session terminates when the Evaluator’s internal confidence score exceeds 0.9, or after a maximum of ten conversational turns, whichever occurs first. A student-initiated end option is permitted after a minimum floor of three turns.
+8.1.4 Temporal Memory Decay Calibration (Status: Mitigated)
+The hybrid decay function specified in Section 3.3 — chronological decay for general context combined with full weight for topic-matched records regardless of age — resolves the most serious calibration risk identified in v2.0. The system will not appear amnesiac about a topic the student engaged with previously when that topic resurfaces. Decay parameters must still be empirically calibrated against real student sessions before deployment.
+8.2 Remaining Open Risks
+8.2.1 Per-Student Graph Overlays at Scale
+Extending per-student overlays to include IRT parameters (theta and slip per concept node) increases the per-student storage and computation burden compared to v2.0. For a course graph with 500 concept nodes and 200 enrolled students, the system now manages 100,000 student-specific IRT parameter sets in addition to the base overlay data. The Curriculum Agent’s propagation job when the professor edits the graph remains a potential bottleneck at large class sizes. The recommended mitigation is to implement the student overlay as a structurally separate layer from the canonical course graph from the beginning of Phase 1, allowing independent querying and writing without lock contention.
+8.2.2 Stylometric Fingerprint Cold Start
+The Integrity Agent’s Style Deviation Index relies on a sufficient historical writing sample from the student to establish a reliable baseline fingerprint. Early in a course, before a student has accumulated meaningful interaction history with the TA Agent, the Integrity Score will be unreliable and should not be surfaced to the professor as a meaningful signal. The system must suppress Integrity Score display until a minimum interaction volume threshold has been reached per student.
+8.2.3 The Professor Graph Editor Scope
+This risk from v2.0 is partially mitigated by the versioned graph snapshots and incremental re-ingestion specified in Section 5.3, but the graph editor remains the most complex frontend engineering challenge in the specification. Treat it as a separate delivery phase with a simplified MVP in Phase 5 and full node and edge manipulation deferred to a post-MVP release.
+8.3 Novel Research Contributions
+This specification moves the OmniProf project beyond the category of system engineering into the category of applied research. Three contributions are worth highlighting explicitly.
+Cognitive Diagnostic Integration: The application of Item Response Theory — a well-established framework in psychometrics and educational measurement — to a Graph RAG student overlay is a novel architectural combination. Moving from static mastery scores to Bayesian Knowledge Tracing within a graph-native personalisation layer enables qualitatively superior pedagogical reasoning that is not achievable with conventional RAG-plus-profile approaches.
+Stylometric Integrity at Inference Time: The implementation of a Student Fingerprinting system that computes a real-time Style Deviation Index during evaluation sessions represents a meaningful advance over existing approaches to AI-plagiarism detection. Current tools operate as post-hoc classifiers on submitted documents. The Integrity Agent operates during the conversational defence itself, detecting anomalies in a student’s live responses against their established writing fingerprint — a fundamentally harder signal to game.
+Speculative Decoding in a Pedagogical Context: The application of speculative decoding — a technique originating in high-throughput inference research — to an educational tutoring system is an unusual combination. The local draft model and cloud verifier architecture achieves the responsiveness required for real-time conversational tutoring while maintaining strict cost constraints through intelligent routing. The latency reduction of approximately 40% on typical tutoring responses makes the difference between an interaction that feels fluid and one that feels like waiting for a search engine.
+8.4 Summary Verdict
+Dimension
+Assessment
+Primary Concern
+Core Architecture
+Strong
+None
+Hierarchical Graph RAG Design
+Strong
+Extraction non-determinism (mitigated by CRAG)
+Cognitive Diagnostic Model (IRT)
+Strong
+Cold-start period before reliable fingerprinting
+Corrective RAG Loop
+Strong
+Grader Model latency must be managed locally
+Personalisation and IRT Overlay
+Moderate
+Overlay scalability at large class sizes
+Temporal Dual-Store Memory
+Strong
+Decay parameter calibration required
+Free-Tier LLM Viability
+Resolved
+Distributed Mesh eliminates existential risk
+Stylometric Integrity
+Strong
+Cold-start suppression logic required
+Speculative Decoding
+Moderate
+Integration complexity with LLMRouter
+Professor Graph Editor
+Moderate
+Scope must be explicitly bounded in MVP
+Defence Termination
+Resolved
+Dual stopping condition specified
+HITL and Ethics Design
+Strong
+None
+Multimodal Embeddings
+Strong
+None
+Appendix: Design Decisions and Open Questions
+Resolved Design Decisions
+The following questions were open in v2.0 and have been resolved in this specification.
+Graph database selection: Neo4j is the recommended choice for production deployments requiring mature tooling and robust graph traversal. Kuzu is the recommended choice for embedded single-server deployments requiring high performance without external infrastructure dependencies.
+Graph extraction validation: An automated validation step is specified in Requirement G-1. The step checks for prerequisite cycles, orphaned nodes with no incoming or outgoing edges, and duplicate concept names before writing any extraction output to the canonical graph.
+Temporal decay function form: A hybrid decay is specified in Section 3.3. Chronological decay governs general context retrieval. Full retrieval weight applies to any record whose active topic nodes match the current query’s graph seed nodes, regardless of age.
+Defence session termination: A dual stopping condition is specified in Section 4.1.1. The session terminates when the Evaluator’s confidence score exceeds 0.9 or after a maximum of ten turns, with a student-initiated end permitted after a three-turn floor.
+Graph versioning: All professor graph edits are versioned with rollback support. A professor can restore any previous graph snapshot, and the Curriculum Agent’s propagation job handles the corresponding overlay reconciliation as a background task.
+Remaining Open Questions
+The following questions must be resolved before Phase 3 begins.
+Cross-course prerequisite edges: Should prerequisite edges be permitted between nodes in different course graphs — for example, a Linear Algebra prerequisite for a Machine Learning concept? If so, who owns cross-course edges, and how is RBAC applied to nodes from a course the student may not be enrolled in?
+Multimodal query pipeline: When a student uploads an image as part of a question, what is the full pipeline? Is the image embedded via Jina and used as a graph query vector, or is it passed directly to the LLM as a vision input? These two paths have substantially different latency and provider compatibility implications and must be specified before Phase 4.
+Integrity cold-start threshold: What is the minimum volume of prior student interaction — measured in tokens, sessions, or evaluated submissions — required before the Integrity Agent’s Style Deviation Index is considered reliable enough to surface to the professor? This threshold must be calibrated empirically before Phase 6.
+End of OmniProf System Specification v3.0
+Prepared March 2026  —  Research & Engineering Grade
