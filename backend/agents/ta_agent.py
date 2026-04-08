@@ -83,11 +83,7 @@ class TAAgent:
         self.model = "llama-3.3-70b-versatile"  # Larger model for better reasoning
         
         # Initialize services
-        self.graph_manager = Neo4jGraphManager(
-            uri=neo4j_uri or os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=neo4j_user or os.getenv("NEO4J_USER", "neo4j"),
-            password=neo4j_password or os.getenv("NEO4J_PASSWORD", "password")
-        )
+        self.graph_manager = Neo4jGraphManager()
         
         self.llm_service = LLMService()
         self.rag_service = RAGService()
