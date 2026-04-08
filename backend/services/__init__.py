@@ -11,7 +11,6 @@ from backend.services.crag_service import CRAGService
 from backend.services.cognitive_engine import CognitiveEngine
 from backend.services.ingestion_service import IngestionService
 from backend.services.jina_multimodal_service import JinaMultimodalService
-from backend.services.local_inference_service import LocalInferenceService
 from backend.services.crag_grader_agent import CRAGGraderAgent
 
 __all__ = [
@@ -25,6 +24,5 @@ __all__ = [
     "CognitiveEngine",
     "IngestionService",
     "JinaMultimodalService",
-    "LocalInferenceService",
     "CRAGGraderAgent",
 ]

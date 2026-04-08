@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, Optional, Tuple
 
 from backend.services.llm_service import LLMService
-from backend.services.local_inference_service import LocalInferenceService
 
 
 logger = logging.getLogger(__name__)
@@ -23,16 +22,15 @@ class ProviderState:
 
 
 class LLMRouter:
-    """Routes LLM tasks across local and cloud providers with backoff and failover."""
+    """Routes LLM tasks across Groq and Cerebras providers with backoff and failover."""
 
     PRIORITY0_TASKS = {"intent_classification", "crag_grading", "memory_summarisation"}
     PRIORITY1_TASKS = {"ta_tutoring", "evaluator_defence", "curriculum_reasoning"}
 
     def __init__(self, llm_service: Optional[LLMService] = None):
         self.llm_service = llm_service or LLMService()
-        self.local_inference = LocalInferenceService()
 
-        self.cloud_order = ["groq", "cerebras", "nim"]
+        self.cloud_order = ["groq", "cerebras"]
         self.base_backoff_seconds = float(os.getenv("LLMROUTER_BACKOFF_SECONDS", "20"))
         self.max_backoff_seconds = float(os.getenv("LLMROUTER_MAX_BACKOFF_SECONDS", "180"))
 
@@ -43,7 +41,6 @@ class LLMRouter:
         }
 
         self.providers: Dict[str, ProviderState] = {
-            "local": ProviderState(available=True, configured=True),
             "groq": ProviderState(
                 available=bool(os.getenv("GROQ_API_KEY")),
                 configured=bool(os.getenv("GROQ_API_KEY")),
@@ -52,17 +49,11 @@ class LLMRouter:
                 available=bool(os.getenv("CEREBRAS_API_KEY")),
                 configured=bool(os.getenv("CEREBRAS_API_KEY")),
             ),
-            "nim": ProviderState(
-                available=bool(os.getenv("NVIDIA_NIM_API_KEY")),
-                configured=bool(os.getenv("NVIDIA_NIM_API_KEY")),
-            ),
         }
 
         self.provider_callers: Dict[str, Callable[[str], str]] = {
-            "local": self._call_local,
             "groq": self._call_groq,
             "cerebras": self._call_cerebras,
-            "nim": self._call_nim,
         }
 
         self.response_cache: Dict[Tuple[str, str], str] = {}
@@ -109,10 +100,10 @@ class LLMRouter:
             return result
 
         if task in self.PRIORITY0_TASKS:
-            provider_chain = ["local"]
+            provider_chain = ["groq", "cerebras"]
             priority = "priority0"
         else:
-            provider_chain = ["groq", "cerebras", "nim", "local"]
+            provider_chain = ["groq", "cerebras"]
             priority = "priority1"
 
         last_error = None
@@ -142,7 +133,7 @@ class LLMRouter:
                 "provider": None,
                 "priority": priority,
                 "reduced_mode": True,
-                "reduced_mode_notification": "Reduced mode active: all providers unavailable.",
+                "reduced_mode_notification": "Reduced mode active: Groq/Cerebras unavailable.",
                 "text": "System is temporarily degraded. Please retry shortly.",
                 "cached": False,
                 "ttft_ms": (time.perf_counter() - start) * 1000.0,
@@ -151,17 +142,13 @@ class LLMRouter:
             self.last_route_decision = result
             return result
 
-        reduced_mode = priority == "priority1" and chosen_provider == "local"
+        reduced_mode = False
         result = {
             "status": "success",
             "provider": chosen_provider,
             "priority": priority,
             "reduced_mode": reduced_mode,
-            "reduced_mode_notification": (
-                "Reduced mode active: cloud providers unavailable, using local inference."
-                if reduced_mode
-                else None
-            ),
+            "reduced_mode_notification": None,
             "text": self.response_cache[cache_key],
             "cached": False,
             "ttft_ms": (time.perf_counter() - start) * 1000.0,
@@ -196,16 +183,6 @@ class LLMRouter:
             return
         if time.time() >= state.backoff_until_unix:
             state.available = True
-
-    def _call_local(self, prompt: str) -> str:
-        # Prefer real local inference, then gracefully degrade to deterministic local fallback.
-        try:
-            generated = self.local_inference.generate(prompt)
-            if generated:
-                return generated
-        except Exception as exc:
-            logger.warning("Local inference generation failed, using fallback stub: %s", str(exc))
-        return f"[local] {prompt[:280]}" if prompt else "[local]"
 
     def _call_groq(self, prompt: str) -> str:
         if "groq" in self.force_rate_limit:
@@ -246,36 +223,3 @@ class LLMRouter:
                     time.time() + self.base_backoff_seconds
                 )
             raise RuntimeError(f"cerebras error: {str(e)}")
-
-    def _call_nim(self, prompt: str) -> str:
-        """Call NVIDIA NIM endpoint using OpenAI client."""
-        if "nim" in self.force_rate_limit:
-            raise RuntimeError("429 rate limit from nim")
-        if not os.getenv("NVIDIA_NIM_API_KEY"):
-            raise RuntimeError("nim not configured")
-        
-        try:
-            openai_module = importlib.import_module("openai")
-            OpenAI = getattr(openai_module, "OpenAI")
-
-            client = OpenAI(
-                base_url="https://integrate.api.nvidia.com/v1",
-                api_key=os.getenv("NVIDIA_NIM_API_KEY")
-            )
-            response = client.chat.completions.create(
-                model="meta/llama-3.1-8b-instruct",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.choices[0].message.content.strip()
-            
-        except ModuleNotFoundError:
-            raise RuntimeError("openai not installed")
-        except Exception as e:
-            # Mark provider as rate-limited and return None for fallthrough
-            error_str = str(e).lower()
-            if "429" in error_str or "rate" in error_str:
-                self.providers["nim"].available = False
-                self.providers["nim"].backoff_until_unix = (
-                    time.time() + self.base_backoff_seconds
-                )
-            raise RuntimeError(f"nim error: {str(e)}")
