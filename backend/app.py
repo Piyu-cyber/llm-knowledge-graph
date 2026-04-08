@@ -20,6 +20,8 @@ from backend.services.cognitive_engine import CognitiveEngine
 from backend.services.llm_router import LLMRouter
 from backend.services.background_job_queue import BackgroundJobQueue
 from backend.services.compliance_service import ComplianceService
+from backend.services.integrity_policy_service import IntegrityPolicyService
+from backend.services.nondeterminism_service import NondeterminismService
 from backend.db.neo4j_driver import Neo4jGraphManager
 from backend.db.user_store import UserStore
 from backend.auth.jwt_handler import create_access_token, verify_token, get_user_from_token
@@ -298,6 +300,8 @@ cognitive_engine = CognitiveEngine()
 llm_router = LLMRouter(llm_service=llm_service)
 background_job_queue = BackgroundJobQueue(data_dir=graph_manager.data_dir)
 compliance_service = ComplianceService(data_dir=graph_manager.data_dir)
+integrity_policy_service = IntegrityPolicyService(data_dir=graph_manager.data_dir)
+nondeterminism_service = NondeterminismService(data_dir=graph_manager.data_dir)
 
 ingestion_service = IngestionService(
     llm_service=llm_service,
@@ -320,7 +324,8 @@ def get_omniprof_graph() -> OmniProfGraph:
     global omniprof_graph
     if omniprof_graph is None:
         logger.info("Initializing OmniProf graph on first chat request")
-        omniprof_graph = OmniProfGraph()
+        policy = integrity_policy_service.get_policy()
+        omniprof_graph = OmniProfGraph(min_token_threshold=policy.get("min_token_threshold", 500))
     return omniprof_graph
 
 
@@ -792,7 +797,12 @@ def query_system(
         if len(query_request.query) > 500:
             raise HTTPException(status_code=400, detail="Query too long")
 
-        result = crag_service.retrieve(query_request.query)
+        user_context = create_user_context(current_user)
+        result = crag_service.retrieve(
+            query_request.query,
+            user_context=user_context,
+            student_id=current_user.get("user_id"),
+        )
         
         return QueryResponse(
             query=query_request.query,
@@ -869,6 +879,7 @@ async def chat(
             metadata={
                 "course_id": request.course_id,
                 "user_role": current_user.get("role"),
+                "course_ids": current_user.get("course_ids", []),
                 "achievements": [],
                 "background_tasks": [],
                 "restore_checkpoint": True,
@@ -1701,6 +1712,57 @@ def route_with_llm_router(
     return llm_router.route(task, prompt)
 
 
+@app.post("/diagnostics/nondeterminism/run", tags=["Phase6"])
+def run_nondeterminism_diff(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_admin_user),
+):
+    """Execute repeated route calls and persist a diff artifact for reproducibility checks."""
+    task = str(payload.get("task", "ta_tutoring"))
+    prompt = str(payload.get("prompt", ""))
+    runs = int(payload.get("runs", 5))
+    return nondeterminism_service.run_router_diff(llm_router, task, prompt, runs=runs)
+
+
+@app.get("/integrity/policy", tags=["Phase6"])
+def get_integrity_policy(
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Read current runtime integrity policy values."""
+    return {"status": "success", **integrity_policy_service.get_policy()}
+
+
+@app.patch("/integrity/policy", tags=["Phase6"])
+def update_integrity_policy(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Update integrity policy and propagate threshold to active graph when present."""
+    if "min_token_threshold" not in payload:
+        raise HTTPException(status_code=400, detail="min_token_threshold is required")
+
+    try:
+        policy = integrity_policy_service.set_min_token_threshold(
+            int(payload["min_token_threshold"]),
+            updated_by=current_user.get("user_id", "unknown"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    os.environ["INTEGRITY_MIN_TOKENS"] = str(policy["min_token_threshold"])
+
+    applied_to_active_graph = False
+    if omniprof_graph is not None and hasattr(omniprof_graph, "integrity_agent"):
+        omniprof_graph.integrity_agent.set_min_token_threshold(policy["min_token_threshold"])
+        applied_to_active_graph = True
+
+    return {
+        "status": "success",
+        **policy,
+        "applied_to_active_graph": applied_to_active_graph,
+    }
+
+
 @app.get("/background-jobs/stats", tags=["Phase6"])
 def get_background_job_stats(
     current_user: Dict = Depends(get_admin_user),
@@ -1728,3 +1790,24 @@ def get_compliance_status(
 ):
     """FERPA/GDPR readiness checks for encryption and audit logs."""
     return compliance_service.status()
+
+
+@app.get("/health/embeddings", tags=["Phase6"])
+def get_embeddings_health(
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Report active embedding backend and basic vector sanity metrics."""
+    try:
+        emb = graph_service.embedding_service
+        probe_vec = emb.embed_text("embedding health probe")
+        nonzero = sum(1 for v in probe_vec if abs(float(v)) > 1e-12)
+        return {
+            "status": "success",
+            "embedding_backend": emb.model_name,
+            "embedding_dim_configured": emb.embedding_dim,
+            "probe_vector_length": len(probe_vec),
+            "probe_nonzero_values": nonzero,
+            "healthy": bool(emb.model_name != "none" and nonzero > 0),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

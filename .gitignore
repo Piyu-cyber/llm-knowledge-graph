@@ -28,3 +28,9 @@ rag_index.faiss
 rag_chunks.pkl
 backend/db/graph_store.pkl
 data/*.json
+
+# Frontend (Vite/React)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/

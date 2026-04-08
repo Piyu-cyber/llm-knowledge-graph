@@ -19,6 +19,7 @@ from statistics import mean, stdev
 from backend.agents.state import AgentState
 from backend.db.neo4j_driver import Neo4jGraphManager
 from backend.db.neo4j_schema import CypherQueries
+from backend.services.integrity_policy_service import IntegrityPolicyService
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,15 @@ class IntegrityAgent:
         
         # Detection thresholds
         self.sdi_anomaly_threshold = 85      # Flag if SDI > 85
-        self.min_token_threshold = int(min_token_threshold if min_token_threshold is not None else os.getenv("INTEGRITY_MIN_TOKENS", "500"))
+        if min_token_threshold is not None:
+            self.min_token_threshold = int(min_token_threshold)
+        else:
+            policy_service = IntegrityPolicyService(data_dir=getattr(self.graph_manager, "data_dir", "data"))
+            self.min_token_threshold = int(policy_service.get_policy().get("min_token_threshold", 500))
+
+    def set_min_token_threshold(self, value: int) -> None:
+        """Allow runtime threshold changes without agent rebuild."""
+        self.min_token_threshold = int(value)
     
     
     # ==================== Main Agent Entry Point ====================
