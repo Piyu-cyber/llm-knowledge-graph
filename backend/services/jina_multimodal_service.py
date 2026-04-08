@@ -1,5 +1,7 @@
 import logging
 import os
+import shutil
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -26,7 +28,12 @@ class JinaMultimodalService:
             logger.info(f"Loaded {self.model_name} ({self.embedding_dim}-dim embeddings)")
             
         except Exception as e:
-            logger.warning(f"Failed to load Jina model: {str(e)}. Attempting fallback...")
+            logger.warning(f"Failed to load Jina model: {str(e)}. Attempting cache repair...")
+
+            if self._repair_jina_cache() and self._retry_load_jina_model():
+                return
+
+            logger.warning("Jina model still unavailable after cache repair. Attempting fallback...")
             
             # Fall back to all-MiniLM-L6-v2 (384-dim)
             try:
@@ -47,6 +54,32 @@ class JinaMultimodalService:
                 )
                 self.model = None
                 self.model_name = "none"
+
+    def _repair_jina_cache(self) -> bool:
+        """Best-effort cleanup for corrupted remote-code cache modules."""
+        try:
+            cache_root = Path.home() / ".cache" / "huggingface" / "modules" / "transformers_modules" / "jinaai"
+            if not cache_root.exists():
+                return False
+            shutil.rmtree(cache_root, ignore_errors=True)
+            logger.info("Removed stale Hugging Face Jina transformers module cache")
+            return True
+        except Exception as e:
+            logger.warning(f"Cache repair failed: {str(e)}")
+            return False
+
+    def _retry_load_jina_model(self) -> bool:
+        """Retry Jina model load after cache cleanup."""
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            self.model = SentenceTransformer("jinaai/jina-embeddings-v3", trust_remote_code=True)
+            self.model_name = "jinaai/jina-embeddings-v3"
+            logger.info(f"Loaded {self.model_name} after cache repair")
+            return True
+        except Exception as e:
+            logger.warning(f"Retry load failed: {str(e)}")
+            return False
 
     def embed_text(self, text: str) -> List[float]:
         """Embed text using loaded model or return zero vector."""

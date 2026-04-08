@@ -216,7 +216,15 @@ class StateCheckpointStore:
         try:
             with open(self.checkpoint_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) else {}
+            if isinstance(data, dict):
+                return data
+            if isinstance(data, list):
+                return {
+                    str(session.get("session_id", "?")): session
+                    for session in data
+                    if isinstance(session, dict)
+                }
+            return {}
         except Exception:
             return {}
 

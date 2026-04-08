@@ -15,7 +15,10 @@ Set-Location C:\Users\mitta\OneDrive\Desktop\LLM\llm-knowledge-graph
 python -m pip install -r .\backend\requirements.txt
 
 # 4) Run FastAPI backend
-python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload
+.\.venv\Scripts\python.exe -m uvicorn backend.app:app --host 127.0.0.1 --port 8000 --reload
+
+# Alternative (recommended): single command script with port cleanup
+.\run-backend.ps1
 ```
 
 Backend URL:
@@ -37,25 +40,29 @@ These are auto-seeded on backend startup when missing:
 
 Local testing only. Rotate/remove before using shared or production deployments.
 
-## Frontend
+## Frontend (React + Vite)
 
-This project uses dashboard pages under the `frontend/` folder.
-
-Quick open:
-- `frontend/student_dashboard.html`
-- `frontend/professor_dashboard.html`
-
-Option 2 (recommended, local HTTP server):
+Run these from a new terminal:
 
 ```powershell
-# In a new terminal, from repo root
-Set-Location C:\Users\mitta\OneDrive\Desktop\LLM\llm-knowledge-graph
-python -m http.server 5500
+# 1) Go to frontend app
+Set-Location C:\Users\mitta\OneDrive\Desktop\LLM\llm-knowledge-graph\frontend
+
+# 2) Install dependencies (one-time)
+npm install
+
+# 3) Start Vite dev server
+npm run dev
 ```
 
-Then open:
-- http://127.0.0.1:5500/frontend/student_dashboard.html
-- http://127.0.0.1:5500/frontend/professor_dashboard.html
+Frontend URL:
+- http://127.0.0.1:5173
+
+Notes:
+- The app defaults to backend base URL `http://127.0.0.1:8000`.
+- You can change API base URL and JWT token directly from the UI sidebar.
+- React app now includes application pages (`Student App`, `Professor App`) plus API Lab.
+- Legacy static HTML pages still exist for reference.
 
 ## Stop Services
 

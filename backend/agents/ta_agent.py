@@ -28,6 +28,7 @@ from backend.services.rag_service import RAGService
 from backend.services.graph_service import GraphService
 from backend.services.memory_service import MemoryService
 from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.auth.rbac import UserContext
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,16 @@ class TAAgent:
             
             # Step 1: Run CRAG loop
             logger.debug(f"Running CRAG loop for query: {state.current_input}")
-            crag_result = self._run_crag_loop(state.current_input)
+            try:
+                crag_result = self._run_crag_loop(
+                    state.current_input,
+                    student_id=state.student_id,
+                    user_role=state.metadata.get("user_role", "student"),
+                    course_ids=state.metadata.get("course_ids", []),
+                )
+            except TypeError:
+                # Backward-compatible fallback for tests/mocks expecting old signature.
+                crag_result = self._run_crag_loop(state.current_input)
             
             # Step 2: Extract concepts from query and response
             logger.debug("Extracting concepts from response")
@@ -230,7 +240,13 @@ class TAAgent:
     
     # ==================== CRAG Loop ====================
     
-    def _run_crag_loop(self, query: str) -> Dict:
+    def _run_crag_loop(
+        self,
+        query: str,
+        student_id: Optional[str] = None,
+        user_role: str = "student",
+        course_ids: Optional[List[str]] = None,
+    ) -> Dict:
         """
         Run the Corrective RAG (CRAG) pipeline.
         
@@ -250,7 +266,16 @@ class TAAgent:
             logger.debug(f"CRAG loop start: {query}")
             
             # Use existing CRAG service
-            crag_result = self.crag_service.retrieve(query)
+            user_context = UserContext(
+                user_id=student_id or "",
+                role=user_role or "student",
+                course_ids=course_ids or [],
+            )
+            crag_result = self.crag_service.retrieve(
+                query,
+                user_context=user_context,
+                student_id=student_id,
+            )
             
             logger.debug(f"CRAG loop result: confidence={crag_result.get('confidence', 0)}")
             return crag_result

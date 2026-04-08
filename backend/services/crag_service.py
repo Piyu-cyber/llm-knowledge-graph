@@ -1,4 +1,5 @@
 from backend.services.crag_grader_agent import CRAGGraderAgent
+from backend.auth.rbac import UserContext
 
 
 class CRAGService:
@@ -8,7 +9,7 @@ class CRAGService:
         self.rag = rag_service
         self.grader = CRAGGraderAgent(llm_service=llm_service)
 
-    def retrieve(self, query):
+    def retrieve(self, query, user_context: UserContext = None, student_id: str = None):
         try:
             # 🔥 STEP 0: SUMMARY DETECTION
             if self._is_summary_query(query):
@@ -26,7 +27,11 @@ class CRAGService:
                 for chunk in rag_results[:3]:
                     words = chunk.split()[:5]
                     for w in words:
-                        results = self.graph.search_concepts(w)
+                        results = self._retrieve_graph_results(
+                            w,
+                            user_context=user_context,
+                            student_id=student_id,
+                        )
                         if results:
                             graph_results.extend(results)
 
@@ -68,7 +73,11 @@ class CRAGService:
             refined_query = self.llm.disambiguate_query(query)
 
             # 🔹 Step 3: Retrieval
-            graph_results = self.graph.search_concepts(refined_query) or []
+            graph_results = self._retrieve_graph_results(
+                refined_query,
+                user_context=user_context,
+                student_id=student_id,
+            )
             rag_results = self.rag.retrieve(refined_query) or []
 
             graph_results = self._filter_graph_results(refined_query, graph_results)
@@ -84,7 +93,11 @@ class CRAGService:
             if score < 0.5:
                 # Try refinement for low confidence
                 improved_query = self._refine_query(refined_query)
-                graph_results = self.graph.search_concepts(improved_query) or []
+                graph_results = self._retrieve_graph_results(
+                    improved_query,
+                    user_context=user_context,
+                    student_id=student_id,
+                )
                 rag_results = self.rag.retrieve(improved_query) or []
                 graph_results = self._filter_graph_results(improved_query, graph_results)
                 combined_context = self._build_context(graph_results, rag_results)
@@ -159,6 +172,23 @@ class CRAGService:
                 "answer": "Something went wrong.",
                 "confidence": 0.0
             }
+
+    def _retrieve_graph_results(self, query: str, user_context: UserContext = None, student_id: str = None):
+        """Prefer personalized hierarchical retrieval when user context is available."""
+        if user_context is not None:
+            try:
+                results = self.graph.personalized_graph_walk(
+                    query=query,
+                    user_context=user_context,
+                    student_id=student_id,
+                    top_k=6,
+                )
+                if results:
+                    return results
+            except Exception:
+                # Fall back to legacy retrieval to preserve availability.
+                pass
+        return self.graph.search_concepts(query) or []
 
     # 🔥 SUMMARY DETECTION
     def _is_summary_query(self, query):

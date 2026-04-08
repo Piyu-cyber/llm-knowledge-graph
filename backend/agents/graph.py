@@ -151,7 +151,7 @@ class OmniProfGraph:
             logger.info(f"IntentClassifier: Processing input from {state.student_id}")
             
             # Classify intent
-            intent = self.intent_classifier.classify(state.current_input)
+            intent, _, _ = self.intent_classifier.classify(state.current_input)
             
             state.metadata["intent"] = intent
             logger.debug(f"Classified intent: {intent}")
@@ -358,13 +358,14 @@ class OmniProfGraph:
         """
         try:
             logger.info(f"ProgressAgent: Generating analytics for {state.student_id}")
+            graph_manager = self.ta_agent.graph_manager
             
             # Retrieve student learning analytics from graph
-            overlays = self.graph_manager.get_all_student_overlays(state.student_id)
+            overlays = graph_manager.get_all_student_overlays(state.student_id)
             mastered = [o for o in overlays if o.get("mastery_probability", 0) >= 0.8]
             visited_modules = set()
             for o in overlays:
-                node = self.graph_manager.get_concept_by_id(o.get("concept_id", ""))
+                node = graph_manager.get_concept_by_id(o.get("concept_id", ""))
                 if node:
                     visited_modules.add(node.get("module_id", ""))
             

@@ -365,6 +365,7 @@ class GraphManager:
             mastery_probability=mastery_probability,
         )
         overlay_data = overlay.to_dict()
+        overlay_data["node_type"] = "StudentOverlay"
         overlay_data["created_at"] = datetime.now().isoformat()
 
         self._add_node_to_graph(overlay.id)
@@ -605,6 +606,7 @@ class GraphManager:
                 )
                 
                 overlay_data = overlay.to_dict()
+                overlay_data['node_type'] = 'StudentOverlay'
                 overlay_data['created_at'] = datetime.now().isoformat()
                 
                 self._add_node_to_graph(overlay.id)
@@ -1129,7 +1131,8 @@ class GraphManager:
         """Get all overlays for a student across all concepts"""
         results = []
         for node_id, node_data in self.nodes_data.items():
-            if node_data.get('user_id') == student_id and node_data.get('level') == 'StudentOverlay':
+            # StudentOverlay nodes are identified by user/concept linkage, not hierarchy level.
+            if node_data.get('user_id') == student_id and node_data.get('concept_id'):
                 results.append({**node_data, 'id': node_id})
         return results
     

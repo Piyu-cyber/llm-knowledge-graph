@@ -1,10 +1,16 @@
 import os
 import time
+import logging
+import importlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Dict, Optional, Tuple
 
 from backend.services.llm_service import LLMService
+from backend.services.local_inference_service import LocalInferenceService
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -24,6 +30,7 @@ class LLMRouter:
 
     def __init__(self, llm_service: Optional[LLMService] = None):
         self.llm_service = llm_service or LLMService()
+        self.local_inference = LocalInferenceService()
 
         self.cloud_order = ["groq", "cerebras", "nim"]
         self.base_backoff_seconds = float(os.getenv("LLMROUTER_BACKOFF_SECONDS", "20"))
@@ -191,7 +198,13 @@ class LLMRouter:
             state.available = True
 
     def _call_local(self, prompt: str) -> str:
-        # Deterministic local response keeps utility tasks fast and testable.
+        # Prefer real local inference, then gracefully degrade to deterministic local fallback.
+        try:
+            generated = self.local_inference.generate(prompt)
+            if generated:
+                return generated
+        except Exception as exc:
+            logger.warning("Local inference generation failed, using fallback stub: %s", str(exc))
         return f"[local] {prompt[:280]}" if prompt else "[local]"
 
     def _call_groq(self, prompt: str) -> str:
@@ -204,7 +217,7 @@ class LLMRouter:
             raise RuntimeError("groq empty response")
         return text
 
-    def _call_cerebras(self, prompt: str) -> Optional[str]:
+    def _call_cerebras(self, prompt: str) -> str:
         """Call Cerebras Cloud API using cerebras-cloud-sdk."""
         if "cerebras" in self.force_rate_limit:
             raise RuntimeError("429 rate limit from cerebras")
@@ -212,8 +225,9 @@ class LLMRouter:
             raise RuntimeError("cerebras not configured")
         
         try:
-            from cerebras.cloud.sdk import Cerebras
-            
+            sdk_module = importlib.import_module("cerebras.cloud.sdk")
+            Cerebras = getattr(sdk_module, "Cerebras")
+
             client = Cerebras(api_key=os.getenv("CEREBRAS_API_KEY"))
             response = client.chat.completions.create(
                 model="llama3.1-8b",
@@ -221,7 +235,7 @@ class LLMRouter:
             )
             return response.choices[0].message.content.strip()
             
-        except ImportError:
+        except ModuleNotFoundError:
             raise RuntimeError("cerebras-cloud-sdk not installed")
         except Exception as e:
             # Mark provider as rate-limited and return None for fallthrough
@@ -233,7 +247,7 @@ class LLMRouter:
                 )
             raise RuntimeError(f"cerebras error: {str(e)}")
 
-    def _call_nim(self, prompt: str) -> Optional[str]:
+    def _call_nim(self, prompt: str) -> str:
         """Call NVIDIA NIM endpoint using OpenAI client."""
         if "nim" in self.force_rate_limit:
             raise RuntimeError("429 rate limit from nim")
@@ -241,8 +255,9 @@ class LLMRouter:
             raise RuntimeError("nim not configured")
         
         try:
-            from openai import OpenAI
-            
+            openai_module = importlib.import_module("openai")
+            OpenAI = getattr(openai_module, "OpenAI")
+
             client = OpenAI(
                 base_url="https://integrate.api.nvidia.com/v1",
                 api_key=os.getenv("NVIDIA_NIM_API_KEY")
@@ -253,7 +268,7 @@ class LLMRouter:
             )
             return response.choices[0].message.content.strip()
             
-        except ImportError:
+        except ModuleNotFoundError:
             raise RuntimeError("openai not installed")
         except Exception as e:
             # Mark provider as rate-limited and return None for fallthrough
