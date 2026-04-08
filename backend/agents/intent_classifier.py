@@ -7,8 +7,8 @@ import logging
 import json
 import re
 from typing import Dict, Tuple
-from groq import Groq
 from backend.agents.state import AgentState
+from backend.services.llm_router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +43,7 @@ class IntentClassifier:
         
         load_dotenv()
         
-        self.client = Groq(api_key=groq_api_key or os.getenv("GROQ_API_KEY"))
-        self.model = "llama-3.1-8b-instant"
+        self.router = LLMRouter()
     
     
     def classify(self, message: str) -> Tuple[str, float, str]:
@@ -63,14 +62,14 @@ class IntentClassifier:
         try:
             prompt = self._build_classification_prompt(message)
             
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,  # Low temperature for consistent classification
-                max_tokens=200
+            route_result = self.router.route(
+                task="intent_classification",
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=200,
+                use_cache=False,
             )
-            
-            response_text = response.choices[0].message.content.strip()
+            response_text = (route_result.get("text") or "").strip()
             
             # Parse the response
             intent, confidence, reasoning = self._parse_response(response_text, message)

@@ -376,12 +376,15 @@ python -c "import faiss; import rustworkx; import groq; print('✅ All imports s
 # Local directory where RustWorkX JSON data (nodes/edges) will be stored
 GRAPH_DATA_DIR=data/graph
 
-# ==================== LLM API ====================
-GROQ_API_KEY=gsk_xxxxxxxxxxxxx  # Get from console.groq.com
-GROQ_MODEL=llama-3.3-70b-versatile
+# ==================== LLM Providers (router-managed) ====================
+GROQ_API_KEY=gsk_xxxxxxxxxxxxx  # Optional provider 1
+CEREBRAS_API_KEY=your_cerebras_key_here  # Optional provider 2
+LLMROUTER_BACKOFF_SECONDS=20
+LLMROUTER_MAX_BACKOFF_SECONDS=180
+LLMROUTER_SPECULATIVE_ENABLED=true
+LLMROUTER_SPECULATIVE_MIN_PROMPT_CHARS=120
 
 # ==================== Embeddings ====================
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 EMBEDDING_DIM=2048
 
 # ==================== Vector Search ====================

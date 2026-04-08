@@ -26,7 +26,7 @@ try:
 except ImportError:
     faiss = None
 
-from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.graph_manager import Neo4jGraphManager
 from backend.services.rag_service import RAGService
 from backend.services.jina_multimodal_service import JinaMultimodalService
 
@@ -124,9 +124,9 @@ class MemoryService:
         Initialize Memory Service.
         
         Args:
-            neo4j_uri: Neo4j database URI
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
+            neo4j_uri: Graph storage URI (unused with RustWorkX local backend)
+            neo4j_user: Graph backend username (unused with RustWorkX local backend)
+            neo4j_password: Graph backend password (unused with RustWorkX local backend)
             rag_service: RAGService instance for embeddings
             embedding_dim: Vector embedding dimension (default 384 for Sentence Transformers)
         """

@@ -56,7 +56,7 @@ class OmniProfGraph:
         self.router = AgentRouter()
         self.checkpoint_store = StateCheckpointStore(checkpoint_path=checkpoint_path)
         
-        self.ta_agent = TAAgent(**kwargs)
+        self.ta_agent = TAAgent()
         self.evaluator_agent = EvaluatorAgent(**kwargs)
         self.integrity_agent = IntegrityAgent(**kwargs)
         self.cognitive_agent = CognitiveEngineAgent(**kwargs)

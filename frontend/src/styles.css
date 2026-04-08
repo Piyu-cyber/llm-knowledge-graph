@@ -68,6 +68,7 @@ label {
 }
 
 input,
+select,
 textarea,
 button {
   border-radius: 10px;
@@ -322,6 +323,23 @@ button:hover {
   background: #faf7ef;
   max-height: 280px;
   overflow: auto;
+}
+
+.progress-bars {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.progress-bars div {
+  display: grid;
+  grid-template-columns: 70px 1fr 28px;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.progress-bars progress {
+  width: 100%;
 }
 
 .student-line,

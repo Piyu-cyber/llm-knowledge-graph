@@ -14,11 +14,11 @@ import os
 from typing import Dict, List, Optional
 from datetime import datetime
 
-from groq import Groq
 from backend.agents.state import AgentState, EvalState
 from backend.services.crag_service import CRAGService
 from backend.services.cognitive_engine import CognitiveEngine
 from backend.services.llm_service import LLMService
+from backend.services.llm_router import LLMRouter
 from backend.services.rag_service import RAGService
 from backend.services.graph_service import GraphService
 from backend.db.graph_manager import GraphManager
@@ -58,16 +58,13 @@ class EvaluatorAgent:
         
         load_dotenv()
         
-        self.groq_key = groq_api_key or os.getenv("GROQ_API_KEY")
-        self.client = Groq(api_key=self.groq_key) if self.groq_key else None
-        self.model = "llama-3.3-70b-versatile"
-        
         # Initialize services using RustWorkX-based GraphManager
         self.graph_manager = GraphManager(
             data_dir=data_dir or os.getenv("DATA_DIR", "data")
         )
         
         self.llm_service = LLMService()
+        self.llm_router = LLMRouter(llm_service=self.llm_service)
         self.rag_service = RAGService()
         self.graph_service = GraphService(self.graph_manager)
         self.cognitive_engine = CognitiveEngine()
@@ -191,7 +188,7 @@ class EvaluatorAgent:
                     anomalous_input=False
                 )
                 
-                # Write to Neo4j
+                # Persist to local graph store
                 self._write_defence_record(record, course_id=state.metadata.get("course_id", "unknown"))
                 
                 # Store record ID in state
@@ -498,7 +495,7 @@ Return ONLY the JSON.
     
     def _write_defence_record(self, record: DefenceRecord, course_id: str = "unknown") -> bool:
         """
-        Write DefenceRecord to Neo4j.
+        Write DefenceRecord to local graph store.
         
         Args:
             record: DefenceRecord instance
@@ -520,7 +517,7 @@ Return ONLY the JSON.
     
     def _call_llm(self, prompt: str, temperature: float = 0.7) -> str:
         """
-        Call Groq LLM safely.
+        Route evaluator prompts through centralized router.
         
         Args:
             prompt: Input prompt
@@ -530,16 +527,16 @@ Return ONLY the JSON.
             Model response or empty string
         """
         try:
-            if self.client is None:
-                return ""
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
+            route_result = self.llm_router.route(
+                task="evaluator_defence",
+                prompt=prompt,
                 temperature=temperature,
-                top_p=0.95,
-                max_tokens=512
+                max_tokens=512,
+                use_cache=False,
             )
-            return response.choices[0].message.content.strip()
+            if route_result.get("status") == "success":
+                return (route_result.get("text") or "").strip()
+            return ""
         except Exception as e:
             logger.error(f"LLM call error: {str(e)}")
             return ""

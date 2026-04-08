@@ -17,7 +17,7 @@ client = Groq(api_key=_groq_api_key) if _groq_api_key else None
 class LLMService:
 
     # 🔥 Utility: Safe LLM call (IMPROVED)
-    def _call_llm(self, prompt, temperature=0, retries=2):
+    def _call_llm(self, prompt, temperature=0, retries=2, model="llama-3.1-8b-instant", max_tokens=None):
         if client is None:
             print("⚠️ GROQ_API_KEY not set. LLM features are disabled.")
             return None
@@ -25,9 +25,10 @@ class LLMService:
         for attempt in range(retries):
             try:
                 response = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model=model,
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=temperature
+                    temperature=temperature,
+                    max_tokens=max_tokens,
                 )
                 return response.choices[0].message.content.strip()
 

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 from statistics import mean, stdev
 
 from backend.agents.state import AgentState
-from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.graph_manager import Neo4jGraphManager
 from backend.db.neo4j_schema import CypherQueries
 from backend.services.integrity_policy_service import IntegrityPolicyService
 
@@ -80,9 +80,9 @@ class IntegrityAgent:
         Initialize Integrity Agent.
         
         Args:
-            neo4j_uri: Neo4j database URI
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
+            neo4j_uri: Graph storage URI (unused with RustWorkX local backend)
+            neo4j_user: Graph backend username (unused with RustWorkX local backend)
+            neo4j_password: Graph backend password (unused with RustWorkX local backend)
         """
         from dotenv import load_dotenv
         
@@ -168,18 +168,25 @@ class IntegrityAgent:
             else:
                 logger.debug(f"Insufficient history ({prior_token_count} tokens, "
                             f"need {self.min_token_threshold}), suppressing SDI")
-                # Set to moderate if can't assess
-                integrity_score = 0.8
+                # Cold-start: enforce strict suppression until threshold is met.
+                integrity_score = None
             
             # Step 4: Update DefenceRecord
             defence_record_id = state.metadata.get("defence_record_id")
             if defence_record_id:
-                status = "flagged" if anomalous_input else "approved"
+                if not has_sufficient_history:
+                    status = "pending_integrity_history"
+                else:
+                    status = "flagged" if anomalous_input else "approved"
                 self._update_defence_record(
                     defence_record_id,
                     status,
                     integrity_score,
-                    anomalous_input
+                    anomalous_input,
+                    sdi=sdi,
+                    sdi_visible=has_sufficient_history,
+                    integrity_visibility=("professor_only" if not has_sufficient_history else "standard"),
+                    prior_token_count=prior_token_count,
                 )
                 
                 logger.info(f"DefenceRecord {defence_record_id} updated with "
@@ -198,6 +205,9 @@ class IntegrityAgent:
                             "integrity_score": integrity_score,
                             "sdi": sdi,
                             "sdi_visible": has_sufficient_history,
+                            "integrity_visibility": ("professor_only" if not has_sufficient_history else "standard"),
+                            "prior_token_count": prior_token_count,
+                            "min_token_threshold": self.min_token_threshold,
                             "status": status,
                         }
                     )
@@ -206,6 +216,10 @@ class IntegrityAgent:
             state.metadata["integrity_score"] = integrity_score
             state.metadata["anomalous_input"] = anomalous_input
             state.metadata["sdi_visible"] = has_sufficient_history
+            state.metadata["integrity_visibility"] = "professor_only" if not has_sufficient_history else "standard"
+            state.metadata["integrity_cold_start"] = not has_sufficient_history
+            state.metadata["integrity_prior_token_count"] = prior_token_count
+            state.metadata["integrity_min_token_threshold"] = self.min_token_threshold
             if sdi is not None:
                 state.metadata["sdi"] = sdi
             
@@ -496,8 +510,12 @@ class IntegrityAgent:
     def _update_defence_record(self,
                               record_id: str,
                               status: str,
-                              integrity_score: float,
-                              anomalous_input: bool) -> bool:
+                              integrity_score: Optional[float],
+                              anomalous_input: bool,
+                              sdi: Optional[float] = None,
+                              sdi_visible: bool = False,
+                              integrity_visibility: str = "standard",
+                              prior_token_count: int = 0) -> bool:
         """
         Update DefenceRecord with integrity assessment results.
         
@@ -517,6 +535,11 @@ class IntegrityAgent:
                     "status": status,
                     "integrity_score": integrity_score,
                     "anomalous_input": anomalous_input,
+                    "sdi": sdi,
+                    "sdi_visible": sdi_visible,
+                    "integrity_visibility": integrity_visibility,
+                    "integrity_prior_token_count": int(prior_token_count),
+                    "integrity_min_token_threshold": int(self.min_token_threshold),
                 },
             )
             logger.info(f"DefenceRecord {record_id} updated: status={status}, "

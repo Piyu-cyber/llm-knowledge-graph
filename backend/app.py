@@ -22,7 +22,7 @@ from backend.services.background_job_queue import BackgroundJobQueue
 from backend.services.compliance_service import ComplianceService
 from backend.services.integrity_policy_service import IntegrityPolicyService
 from backend.services.nondeterminism_service import NondeterminismService
-from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.graph_manager import Neo4jGraphManager
 from backend.db.user_store import UserStore
 from backend.auth.jwt_handler import create_access_token, verify_token, get_user_from_token
 from backend.auth.rbac import UserContext
@@ -977,7 +977,21 @@ def get_professor_hitl_queue(
             rows = graph_manager.list_hitl_queue()
         else:
             rows = graph_manager.list_hitl_queue(current_user.get("course_ids", []))
-        return {"status": "success", "count": len(rows), "items": rows}
+        normalized = []
+        for row in rows:
+            sdi_visible = bool(row.get("sdi_visible", False))
+            normalized.append(
+                {
+                    **row,
+                    "integrity_display_mode": "full" if sdi_visible else "suppressed_cold_start",
+                    "integrity_display_note": (
+                        "SDI hidden until writing-history threshold is met."
+                        if not sdi_visible
+                        else "SDI visible."
+                    ),
+                }
+            )
+        return {"status": "success", "count": len(normalized), "items": normalized}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1169,12 +1183,26 @@ def get_submission_status(
         )
 
         status_text = str(record.get("status", "pending_defence"))
+        sdi_visible = bool(record.get("sdi_visible", False))
+        is_student = current_user.get("role") == "student"
         return {
             "status": "success",
             "submission_id": submission_id,
             "workflow_status": status_text,
             "pending_professor_approval": status_text in ["pending_professor_review", "pending_defence"],
             "final_grade": record.get("final_grade"),
+            "integrity": {
+                "integrity_score": None if (is_student and not sdi_visible) else record.get("integrity_score"),
+                "sdi": None if (is_student and not sdi_visible) else record.get("sdi"),
+                "sdi_visible": sdi_visible,
+                "visibility_mode": record.get("integrity_visibility", "standard"),
+                "cold_start_suppressed": not sdi_visible,
+                "display_note": (
+                    "Integrity signals are hidden until enough writing history is collected."
+                    if (is_student and not sdi_visible)
+                    else None
+                ),
+            },
         }
     except HTTPException:
         raise
@@ -1773,6 +1801,7 @@ def get_background_job_stats(
 
 @app.post("/background-jobs/drain", tags=["Phase6"])
 def drain_background_jobs(
+    max_jobs: int = Query(100, ge=1, le=5000),
     current_user: Dict = Depends(get_admin_user),
 ):
     """Process due background jobs and move repeated failures to dead-letter."""
@@ -1781,7 +1810,26 @@ def drain_background_jobs(
         "summarisation_agent": lambda _payload: None,
         "background_task": lambda _payload: None,
     }
-    return background_job_queue.run_due_jobs(handlers=handlers)
+    return background_job_queue.run_due_jobs(handlers=handlers, max_jobs=max_jobs)
+
+
+@app.post("/background-jobs/replay-dead-letter", tags=["Phase6"])
+def replay_dead_letter_jobs(
+    limit: int = Query(100, ge=1, le=5000),
+    reset_attempts: bool = Query(True),
+    current_user: Dict = Depends(get_admin_user),
+):
+    """Replay dead-letter jobs back to active queue."""
+    return background_job_queue.replay_dead_letter(limit=limit, reset_attempts=reset_attempts)
+
+
+@app.get("/background-jobs/history", tags=["Phase6"])
+def get_background_job_history(
+    limit: int = Query(100, ge=1, le=1000),
+    current_user: Dict = Depends(get_admin_user),
+):
+    """Recent queue scheduling/retry/dead-letter/replay events."""
+    return background_job_queue.recent_history(limit=limit)
 
 
 @app.get("/compliance/status", tags=["Phase6"])
@@ -1790,6 +1838,50 @@ def get_compliance_status(
 ):
     """FERPA/GDPR readiness checks for encryption and audit logs."""
     return compliance_service.status()
+
+
+@app.get("/observability/metrics", tags=["Phase6"])
+def get_observability_metrics(
+    current_user: Dict = Depends(get_admin_user),
+):
+    """Baseline operational metrics across router and background jobs."""
+    return {
+        "status": "success",
+        "router": {
+            "provider_dashboards": llm_router.provider_dashboards(),
+            "error_budget": llm_router.error_budget(),
+        },
+        "background_jobs": background_job_queue.stats(),
+    }
+
+
+@app.get("/observability/traces", tags=["Phase6"])
+def get_observability_traces(
+    limit: int = Query(100, ge=1, le=1000),
+    current_user: Dict = Depends(get_admin_user),
+):
+    """Recent route and queue execution traces."""
+    return {
+        "status": "success",
+        "router": llm_router.recent_traces(limit=limit),
+        "background_jobs": background_job_queue.recent_history(limit=limit),
+    }
+
+
+@app.get("/observability/error-budget", tags=["Phase6"])
+def get_observability_error_budget(
+    current_user: Dict = Depends(get_admin_user),
+):
+    """Service-level error budget view based on router outcomes."""
+    return {"status": "success", **llm_router.error_budget()}
+
+
+@app.get("/observability/providers", tags=["Phase6"])
+def get_observability_provider_dashboards(
+    current_user: Dict = Depends(get_admin_user),
+):
+    """Provider-level latency/failure dashboard."""
+    return {"status": "success", "providers": llm_router.provider_dashboards()}
 
 
 @app.get("/health/embeddings", tags=["Phase6"])

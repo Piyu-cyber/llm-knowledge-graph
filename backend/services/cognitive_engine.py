@@ -8,7 +8,7 @@ import logging
 import math
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
-from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.graph_manager import Neo4jGraphManager
 
 logger = logging.getLogger(__name__)
 

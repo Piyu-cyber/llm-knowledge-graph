@@ -26,7 +26,7 @@ if ($portListeners) {
 # Create backend/.env from template if missing.
 if (-not (Test-Path .\backend\.env) -and (Test-Path .\backend\.env.example)) {
     Copy-Item .\backend\.env.example .\backend\.env
-    Write-Host "Created backend/.env from backend/.env.example. Add GROQ_API_KEY to enable LLM features."
+    Write-Host "Created backend/.env from backend/.env.example. Configure GROQ_API_KEY and/or CEREBRAS_API_KEY for router providers."
 }
 
 $venvPath = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"

@@ -1,7 +1,7 @@
 """
-OmniProf v3.0 — Neo4j Database Manager (Deprecated)
-This module is deprecated. Use graph_manager.py with RustWorkX instead.
-Kept for backward compatibility.
+OmniProf v3.0 — Graph manager compatibility shim.
+Routes legacy imports to the RustWorkX-based graph manager.
+Prefer importing from backend.db.graph_manager directly.
 """
 
 import logging

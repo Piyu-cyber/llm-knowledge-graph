@@ -88,7 +88,9 @@ pip install -r backend/requirements.txt
 ### Step 2: Configure
 ```bash
 cp .env.example .env
-# Add your Groq API key: GROQ_API_KEY=gsk_xxxxx
+# Configure at least one provider key:
+# GROQ_API_KEY=gsk_xxxxx
+# CEREBRAS_API_KEY=your_key
 ```
 
 ### Step 3: Run

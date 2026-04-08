@@ -29,7 +29,7 @@ class CognitiveEngineAgent:
     Workflow:
     1. Identify the concept that was probed
     2. Determine if student response was correct/incorrect
-    3. Read concept difficulty from Neo4j
+    3. Read concept difficulty from local graph store
     4. Call bayesian_update() to compute new theta and slip
     5. Write updated parameters back to StudentOverlay
     6. Update mastery_probability
