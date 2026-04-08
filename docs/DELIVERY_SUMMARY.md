@@ -317,7 +317,7 @@ uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
 
 ### For Full Context
 - Read [QUICK_START.md](QUICK_START.md) (5 min)
-- Read [README.md](README.md) (30 min)
+- Read [README.md](../readme.md) (30 min)
 - Follow [RUN_COMMANDS.md](RUN_COMMANDS.md) for operations
 
 ---
@@ -326,8 +326,8 @@ uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
 
 **Where to find what you need:**
 1. **Quick overview**: [QUICK_START.md](QUICK_START.md)
-2. **Setup help**: [README.md - Installation](README.md#installation)
-3. **API examples**: [README.md - API Endpoints](README.md#api-endpoints)
+2. **Setup help**: [README.md - Installation](../readme.md#installation)
+3. **API examples**: [README.md - API Endpoints](../readme.md#api-endpoints)
 4. **Test execution**: [RUN_COMMANDS.md](RUN_COMMANDS.md)
 5. **Operations**: [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md)
 6. **Navigation**: [INDEX.md](INDEX.md)

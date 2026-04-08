@@ -4,7 +4,7 @@
 
 > **Status:** Phase 6 Complete ✅ | Multi-Agent System Operational | Dashboard MVP Ready
 
-Operational runbook and full API verification commands are documented in `PROJECT_AUDIT_AND_RUNBOOK.md`.
+Operational runbook and full API verification commands are documented in `docs/PROJECT_AUDIT_AND_RUNBOOK.md`.
 
 
 ---
@@ -766,9 +766,9 @@ omniprof/
 ├── .gitignore
 ├── requirements.txt              # Python dependencies
 ├── README.md                      # This file
-├── RUN_COMMANDS.md               # Fast startup commands
-├── PHASE_WISE_TESTING_PLAN.md    # Phase testing matrix and gates
-└── PROJECT_AUDIT_AND_RUNBOOK.md  # Consolidated operational runbook
+├── docs/RUN_COMMANDS.md               # Fast startup commands
+├── docs/PHASE_WISE_TESTING_PLAN.md    # Phase testing matrix and gates
+└── docs/PROJECT_AUDIT_AND_RUNBOOK.md  # Consolidated operational runbook
 ```
 
 ### Adding New Features
@@ -1271,16 +1271,16 @@ curl -X POST http://localhost:8000/auth/register \
 # See "Main Chat Interface" section in API Endpoints above
 ```
 
-For detailed commands, see `RUN_COMMANDS.md` and `PROJECT_AUDIT_AND_RUNBOOK.md`.
+For detailed commands, see `docs/RUN_COMMANDS.md` and `docs/PROJECT_AUDIT_AND_RUNBOOK.md`.
 
 ---
 
 ## Support & Documentation
 
 - **API Documentation**: http://localhost:8000/docs (Swagger UI)
-- **Operations & API verification**: See `PROJECT_AUDIT_AND_RUNBOOK.md`
-- **Testing by phase**: See `PHASE_WISE_TESTING_PLAN.md`
-- **Quick startup commands**: See `RUN_COMMANDS.md`
+- **Operations & API verification**: See `docs/PROJECT_AUDIT_AND_RUNBOOK.md`
+- **Testing by phase**: See `docs/PHASE_WISE_TESTING_PLAN.md`
+- **Quick startup commands**: See `docs/RUN_COMMANDS.md`
 - **Code Comments**: Comprehensive docstrings in all modules
 
 ---
