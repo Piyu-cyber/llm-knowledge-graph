@@ -18,10 +18,10 @@ Welcome to OmniProf v3.0! This guide helps you quickly find what you need.
 - ⏳ Phase 7 (hardening) planned
 
 ### 👨‍💻 For Developers (Getting Started)
-1. **First**: Review [README.md](README.md) - System Overview section
-2. **Next**: Run [Installation](README.md#installation) steps
+1. **First**: Review [README.md](../readme.md) - System Overview section
+2. **Next**: Run [Installation](../readme.md#installation) steps
 3. **Then**: Open http://localhost:8000/docs (after starting server)
-4. **Finally**: Try the [Quick Chat Example](README.md#main-chat-interface-phase-4-5)
+4. **Finally**: Try the [Quick Chat Example](../readme.md#main-chat-interface-phase-4-5)
 
 **Key files to explore**:
 - Backend services: `backend/services/`
@@ -29,16 +29,16 @@ Welcome to OmniProf v3.0! This guide helps you quickly find what you need.
 - Tests: `tests/phases/`
 
 ### 🧪 For QA / Testing
-1. **Setup**: [Installation](README.md#installation)
-2. **Run tests**: [Running Tests](README.md#running-tests)
+1. **Setup**: [Installation](../readme.md#installation)
+2. **Run tests**: [Running Tests](../readme.md#running-tests)
 3. **Test plan**: [PHASE_WISE_TESTING_PLAN.md](PHASE_WISE_TESTING_PLAN.md)
 4. **API verification**: [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md#5-full-api-verification-table)
 
 ### 🚀 For DevOps / SRE
 1. **Quick start**: [RUN_COMMANDS.md](RUN_COMMANDS.md)
 2. **Operations**: [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md)
-3. **Docker**: [Docker Deployment](README.md#docker-deployment)
-4. **Troubleshooting**: [Troubleshooting Section](README.md#troubleshooting)
+3. **Docker**: [Docker Deployment](../readme.md#docker-deployment)
+4. **Troubleshooting**: [Troubleshooting Section](../readme.md#troubleshooting)
 
 ---
 
@@ -74,59 +74,59 @@ Welcome to OmniProf v3.0! This guide helps you quickly find what you need.
 
 ### "How do I set up and run the system?"
 **Quick way**: See [QUICK_START.md](QUICK_START.md) - 3 Steps section  
-**Detailed way**: See [README.md](README.md) - Installation section  
+**Detailed way**: See [README.md](../readme.md) - Installation section  
 **With commands**: See [RUN_COMMANDS.md](RUN_COMMANDS.md)
 
 ### "What API endpoints are available?"
 **Interactive docs**: Start server → http://localhost:8000/docs  
 **Command reference**: [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md#5-full-api-verification-table)  
-**Examples**: [README.md](README.md#api-endpoints) - API Endpoints section
+**Examples**: [README.md](../readme.md#api-endpoints) - API Endpoints section
 
 ### "How do I test the system?"
 **Quick test**: [RUN_COMMANDS.md](RUN_COMMANDS.md) - Run Tests section  
 **Full testing plan**: [PHASE_WISE_TESTING_PLAN.md](PHASE_WISE_TESTING_PLAN.md)  
-**Details**: [README.md](README.md#running-tests) - Running Tests
+**Details**: [README.md](../readme.md#running-tests) - Running Tests
 
 ### "What's the architecture?"
-**System overview**: [README.md](README.md#architecture)  
-**Data flow diagram**: [README.md](README.md#data-flow-chat-request--response)  
+**System overview**: [README.md](../readme.md#architecture)  
+**Data flow diagram**: [README.md](../readme.md#data-flow-chat-request--response)  
 **Components**: [COMPLETION_STATUS.md](COMPLETION_STATUS.md) - Implementation Summary
 
 ### "What agents are implemented?"
 **Overview table**: [COMPLETION_STATUS.md](COMPLETION_STATUS.md#phase-4-multi-agent-orchestration) - Implemented Agents  
-**Detailed breakdown**: [README.md](README.md#what-has-been-built) - The 8 Agents  
+**Detailed breakdown**: [README.md](../readme.md#what-has-been-built) - The 8 Agents  
 
 ### "What tests are there and do they pass?"
 **Test status**: [COMPLETION_STATUS.md](COMPLETION_STATUS.md#test-coverage) - 100% passing ✅  
-**How to run**: [README.md](README.md#running-tests) - Running Tests  
+**How to run**: [README.md](../readme.md#running-tests) - Running Tests  
 **Test plan**: [PHASE_WISE_TESTING_PLAN.md](PHASE_WISE_TESTING_PLAN.md)
 
 ### "What needs to be done still?"
-**Remaining work**: [README.md](README.md#whats-remaining-known-gaps) - What's Remaining  
+**Remaining work**: [README.md](../readme.md#whats-remaining-known-gaps) - What's Remaining  
 **Phase 7 details**: [COMPLETION_STATUS.md](COMPLETION_STATUS.md#phase-7-production-hardening-planned)
 
 ### "How do I deploy to production?"
-**Docker setup**: [README.md](README.md#docker-deployment)  
-**Environment config**: [README.md](README.md#environment-variables-env-file)  
+**Docker setup**: [README.md](../readme.md#docker-deployment)  
+**Environment config**: [README.md](../readme.md#environment-variables-env-file)  
 **Operations guide**: [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md)
 
 ### "What if something breaks?"
-**Troubleshooting**: [README.md](README.md#troubleshooting) - Common Issues & Solutions  
-**Debug guide**: [README.md](README.md#debug-mode)  
+**Troubleshooting**: [README.md](../readme.md#troubleshooting) - Common Issues & Solutions  
+**Debug guide**: [README.md](../readme.md#debug-mode)  
 **Operations help**: [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md)
 
 ### "What's the tech stack?"
-**Backend**: [README.md](README.md#system-overview) - Prerequisites section  
+**Backend**: [README.md](../readme.md#system-overview) - Prerequisites section  
 **Frontend**: [COMPLETION_STATUS.md](COMPLETION_STATUS.md#technical-stack) - Technical Stack  
-**Full details**: [README.md](README.md) - entire Architecture section
+**Full details**: [README.md](../readme.md) - entire Architecture section
 
 ### "Can I see code examples?"
-**All endpoints**: [README.md](README.md#api-endpoints) - API Endpoints section with curl examples  
+**All endpoints**: [README.md](../readme.md#api-endpoints) - API Endpoints section with curl examples  
 **Operations**: [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md#5-full-api-verification-table)
 
 ### "What's different about Phase 4?"
 **Agent framework**: [COMPLETION_STATUS.md](COMPLETION_STATUS.md#phase-4-multi-agent-orchestration) - Core Feature  
-**Details**: [README.md](README.md#phase-4-multi-agent-orchestration) - What's Implemented
+**Details**: [README.md](../readme.md#phase-4-multi-agent-orchestration) - What's Implemented
 
 ---
 
@@ -139,20 +139,20 @@ Welcome to OmniProf v3.0! This guide helps you quickly find what you need.
 
 ### I want to... *understand what's built*
 1. Read [COMPLETION_STATUS.md](COMPLETION_STATUS.md) - Phases section
-2. Review [README.md](README.md#architecture) - Architecture section
+2. Review [README.md](../readme.md#architecture) - Architecture section
 3. Check test results: [COMPLETION_STATUS.md](COMPLETION_STATUS.md#test-coverage)
 
 ### I want to... *deploy to production*
-1. Read [README.md](README.md#docker-deployment) - Docker Deployment
+1. Read [README.md](../readme.md#docker-deployment) - Docker Deployment
 2. Follow [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md) - Environment Setup
-3. Review [README.md](README.md#environment-variables-env-file) - Configuration
+3. Review [README.md](../readme.md#environment-variables-env-file) - Configuration
 
 ### I want to... *verify all APIs work*
 1. Start the server following [QUICK_START.md](QUICK_START.md)
 2. Follow [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md#5-full-api-verification-table) - Full API Verification
 
 ### I want to... *add a new feature*
-1. Review [README.md](README.md#development-workflow) - Development Workflow
+1. Review [README.md](../readme.md#development-workflow) - Development Workflow
 2. Check your feature type:
    - New agent? See "Add New Agent"
    - New service? See "Add New Service"
@@ -161,15 +161,15 @@ Welcome to OmniProf v3.0! This guide helps you quickly find what you need.
 ### I want to... *understand the test plan*
 1. Start with [PHASE_WISE_TESTING_PLAN.md](PHASE_WISE_TESTING_PLAN.md)
 2. View test status: [COMPLETION_STATUS.md](COMPLETION_STATUS.md#test-coverage)
-3. Run tests: [README.md](README.md#running-tests)
+3. Run tests: [README.md](../readme.md#running-tests)
 
 ### I want to... *report a bug or issue*
-1. Check [README.md](README.md#troubleshooting) - Troubleshooting section
-2. Check [README.md](README.md#debug-mode) - Debug Mode section
+1. Check [README.md](../readme.md#troubleshooting) - Troubleshooting section
+2. Check [README.md](../readme.md#debug-mode) - Debug Mode section
 3. Review code at: `backend/` directory
 
 ### I want to... *understand the agents*
-1. Overview: [README.md](README.md#what-has-been-built) - The 8 Agents  
+1. Overview: [README.md](../readme.md#what-has-been-built) - The 8 Agents  
 2. Details: [COMPLETION_STATUS.md](COMPLETION_STATUS.md#phase-4-multi-agent-orchestration) - Implemented Agents
 3. Code: `backend/agents/` directory
 
@@ -228,7 +228,7 @@ Welcome to OmniProf v3.0! This guide helps you quickly find what you need.
 |------|------|------|
 | This index | [INDEX.md](INDEX.md) | This file |
 | Quick overview | [QUICK_START.md](QUICK_START.md) | 1 page |
-| Main guide | [README.md](README.md) | 20 pages |
+| Main guide | [README.md](../readme.md) | 20 pages |
 | Phase details | [COMPLETION_STATUS.md](COMPLETION_STATUS.md) | 15 pages |
 | Operational guide | [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md) | 10 pages |
 | Testing plan | [PHASE_WISE_TESTING_PLAN.md](PHASE_WISE_TESTING_PLAN.md) | 8 pages |
@@ -241,7 +241,7 @@ Welcome to OmniProf v3.0! This guide helps you quickly find what you need.
 1. **Before asking**: Check the document map above
 2. **Check code comments**: All code has comprehensive docstrings
 3. **Check API docs**: http://localhost:8000/docs (when running)
-4. **Read troubleshooting**: [README.md Troubleshooting](README.md#troubleshooting)
+4. **Read troubleshooting**: [README.md Troubleshooting](../readme.md#troubleshooting)
 
 ---
 

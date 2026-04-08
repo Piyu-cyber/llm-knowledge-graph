@@ -160,8 +160,8 @@
 **Total time: 45 minutes**
 
 1. Read: [QUICK_START.md](QUICK_START.md) (5 min)
-2. Read: [README.md](README.md) - Architecture section (15 min)
-3. Skim: [README.md](README.md) - Development Workflow (10 min)
+2. Read: [README.md](../readme.md) - Architecture section (15 min)
+3. Skim: [README.md](../readme.md) - Development Workflow (10 min)
 4. Follow: [RUN_COMMANDS.md](RUN_COMMANDS.md) - Run Installation (5 min)
 5. Explore: `backend/` code directory (30+ min)
 6. Run: `pytest` to verify tests (5 min)
@@ -175,7 +175,7 @@
 
 1. Read: [QUICK_START.md](QUICK_START.md) (5 min)
 2. Review: Mockups in `frontend/` directory (5 min)
-3. Read: [README.md](README.md) - API Endpoints section (10 min)
+3. Read: [README.md](../readme.md) - API Endpoints section (10 min)
 4. Open: http://localhost:8000/docs (after starting server) (10 min)
 
 **Outcome**: You understand the API contracts and can build the UI
@@ -197,9 +197,9 @@
 ### 🚀 **DevOps / System Administrator**
 **Total time**: 40 minutes
 
-1. Read: [README.md](README.md) - Installation & Configuration (15 min)
+1. Read: [README.md](../readme.md) - Installation & Configuration (15 min)
 2. Read: [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md) (15 min)
-3. Read: [README.md](README.md) - Docker Deployment (5 min)
+3. Read: [README.md](../readme.md) - Docker Deployment (5 min)
 4. Review: `.env.example` file (5 min)
 5. Plan: Phase 7 hardening steps (5 min)
 
@@ -211,7 +211,7 @@
 **Total time**: 25 minutes
 
 1. Read: [COMPLETION_STATUS.md](COMPLETION_STATUS.md) (15 min)
-2. Review: Compliance Service section in [README.md](README.md) (5 min)
+2. Review: Compliance Service section in [README.md](../readme.md) (5 min)
 3. Check: [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md) - Compliance section (5 min)
 
 **Outcome**: You understand compliance features and what's been implemented
@@ -246,12 +246,12 @@ A: See [COMPLETION_STATUS.md](COMPLETION_STATUS.md) Executive Summary
 - ⏳ Phase 7 (hardening) planned but not started
 
 **Q: "How do I run the system?"**  
-A: See [RUN_COMMANDS.md](RUN_COMMANDS.md) or [README.md](README.md#running-the-system)
+A: See [RUN_COMMANDS.md](RUN_COMMANDS.md) or [README.md](../readme.md#running-the-system)
 - 3-step quick start in README
 - Copy-paste commands in RUN_COMMANDS.md
 
 **Q: "What APIs are available?"**  
-A: See [README.md](README.md#api-endpoints) or start server → http://localhost:8000/docs
+A: See [README.md](../readme.md#api-endpoints) or start server → http://localhost:8000/docs
 - 20+ endpoints documented
 - Interactive API explorer available
 
@@ -261,25 +261,25 @@ A: See [PHASE_WISE_TESTING_PLAN.md](PHASE_WISE_TESTING_PLAN.md)
 - 100% passing rate
 
 **Q: "What's the architecture?"**  
-A: See [README.md](README.md#architecture)
+A: See [README.md](../readme.md#architecture)
 - System diagram included
 - Data flow visualization
 - Layer-by-layer explanation
 
 **Q: "What needs to be done?"**  
-A: See [README.md](README.md#whats-remaining-known-gaps) or [COMPLETION_STATUS.md](COMPLETION_STATUS.md#phase-7-production-hardening-planned)
+A: See [README.md](../readme.md#whats-remaining-known-gaps) or [COMPLETION_STATUS.md](COMPLETION_STATUS.md#phase-7-production-hardening-planned)
 - Phase 7 hardening tasks listed
 - Frontend implementation needed
 - Deployment-time tasks identified
 
 **Q: "How do I deploy?"**  
-A: See [README.md](README.md#docker-deployment) or [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md)
+A: See [README.md](../readme.md#docker-deployment) or [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md)
 - Docker setup instructions
 - Environment configuration
 - Production considerations
 
 **Q: "What's broken?"**  
-A: See [README.md](README.md#troubleshooting)
+A: See [README.md](../readme.md#troubleshooting)
 - Common issues & solutions
 - Debug mode instructions
 - Support contacts
@@ -314,10 +314,10 @@ A: See [README.md](README.md#troubleshooting)
 → Read [QUICK_START.md](QUICK_START.md) + [DELIVERY_SUMMARY.md](DELIVERY_SUMMARY.md)
 
 ### I have 30 minutes
-→ Read [README.md](README.md) Architecture section + Follow 3-step setup
+→ Read [README.md](../readme.md) Architecture section + Follow 3-step setup
 
 ### I have 1 hour
-→ Read [README.md](README.md) fully + Follow setup + Run tests
+→ Read [README.md](../readme.md) fully + Follow setup + Run tests
 
 ### I have 2 hours
 → Read all documentation + Explore code + Run full test suite
@@ -330,15 +330,15 @@ A: See [README.md](README.md#troubleshooting)
 
 - **understand the project status** → [COMPLETION_STATUS.md](COMPLETION_STATUS.md)
 - **get running immediately** → [RUN_COMMANDS.md](RUN_COMMANDS.md)
-- **deploy to production** → [README.md](README.md#docker-deployment) + [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md)
+- **deploy to production** → [README.md](../readme.md#docker-deployment) + [PROJECT_AUDIT_AND_RUNBOOK.md](PROJECT_AUDIT_AND_RUNBOOK.md)
 - **run tests** → [PHASE_WISE_TESTING_PLAN.md](PHASE_WISE_TESTING_PLAN.md) + [RUN_COMMANDS.md](RUN_COMMANDS.md)
-- **see API examples** → [README.md](README.md#api-endpoints)
-- **understand architecture** → [README.md](README.md#architecture)
-- **add a feature** → [README.md](README.md#development-workflow)
-- **fix a bug** → [README.md](README.md#troubleshooting)
+- **see API examples** → [README.md](../readme.md#api-endpoints)
+- **understand architecture** → [README.md](../readme.md#architecture)
+- **add a feature** → [README.md](../readme.md#development-workflow)
+- **fix a bug** → [README.md](../readme.md#troubleshooting)
 - **verify everything works** → [DELIVERY_SUMMARY.md](DELIVERY_SUMMARY.md#-verification-checklist)
 - **brief my manager** → [QUICK_START.md](QUICK_START.md) + [COMPLETION_STATUS.md](COMPLETION_STATUS.md)
-- **understand the agents** → [COMPLETION_STATUS.md](COMPLETION_STATUS.md#phase-4-multi-agent-orchestration) + [README.md](README.md#what-has-been-built)
+- **understand the agents** → [COMPLETION_STATUS.md](COMPLETION_STATUS.md#phase-4-multi-agent-orchestration) + [README.md](../readme.md#what-has-been-built)
 
 ---
 
@@ -347,7 +347,7 @@ A: See [README.md](README.md#troubleshooting)
 1. **Check the relevant document** using the tabs above
 2. **Check the Table of Contents** in that document
 3. **Use Ctrl+F** to search for keywords
-4. **Check [README.md](README.md#troubleshooting)** Troubleshooting section
+4. **Check [README.md](../readme.md#troubleshooting)** Troubleshooting section
 5. **Start the server** and visit http://localhost:8000/docs for API help
 
 ---
