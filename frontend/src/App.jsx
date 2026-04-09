@@ -269,7 +269,12 @@ export default function App() {
               profCourse={profCourse} 
               lowPowerMode={lowPowerMode}
               devMode={devMode} 
-              pushActivity={pushActivity} 
+              pushActivity={pushActivity}
+              onAuthExpired={() => {
+                saveToken("");
+                setAuthError("Session expired. Please sign in again.");
+                setAuthView("login");
+              }}
             />
           )}
         </section>

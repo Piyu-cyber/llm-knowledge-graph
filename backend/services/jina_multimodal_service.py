@@ -4,7 +4,7 @@ import shutil
 import threading
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 import numpy as np
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class JinaMultimodalService:
     """Lightweight multimodal embedding service with real semantic embeddings."""
 
-    _MODEL_CACHE: Dict[str, object] = {}
+    _MODEL_CACHE: Dict[str, Any] = {}
     _CACHE_LOCK = threading.Lock()
 
     def __init__(self, embedding_dim: int = 2048):
@@ -40,6 +40,7 @@ class JinaMultimodalService:
             self.active_provider = "local"
         else:
             self.active_provider = "api" if self.jina_api_key else "local"
+        self._api_disabled_reason: Optional[str] = None
 
         self._text_cache_max_entries = max(0, int(os.getenv("EMBEDDING_TEXT_CACHE_MAX_ENTRIES", "256") or "256"))
         self._text_cache: OrderedDict[str, List[float]] = OrderedDict()
@@ -107,7 +108,8 @@ class JinaMultimodalService:
                 if self.primary_model.startswith("jinaai/"):
                     logger.warning("Attempting Jina cache repair...")
                     if self._repair_jina_cache() and self._retry_load_jina_model():
-                        self._MODEL_CACHE[self.model_name] = self.model
+                        if self.model_name:
+                            self._MODEL_CACHE[self.model_name] = self.model
                         return
 
                 if not self.fallback_model:
@@ -206,7 +208,7 @@ class JinaMultimodalService:
             return [0.0] * self.embedding_dim
 
     def _embed_text_via_api(self, text: str) -> Optional[List[float]]:
-        if not self.jina_api_key:
+        if not self.jina_api_key or self.active_provider != "api":
             return None
 
         payload = {
@@ -234,6 +236,20 @@ class JinaMultimodalService:
             if not emb:
                 return None
             return self._normalize_embedding(emb)
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code if e.response is not None else None
+            # 401/403 are persistent auth/config failures; stop retrying API for this process.
+            if status_code in (401, 403):
+                if self._api_disabled_reason is None:
+                    self._api_disabled_reason = f"HTTP {status_code}"
+                    logger.warning(
+                        "Disabling Jina API embeddings after authentication failure (%s); "
+                        "switching to local model fallback.",
+                        self._api_disabled_reason,
+                    )
+                self.active_provider = "local"
+            logger.warning("Jina API embedding request failed: %s", str(e))
+            return None
         except Exception as e:
             logger.warning("Jina API embedding request failed: %s", str(e))
             return None

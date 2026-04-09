@@ -7,6 +7,7 @@ export default function ProfessorDashboard({
   profCourse,
   devMode,
   pushActivity,
+  onAuthExpired,
 }) {
   const [busy, setBusy] = useState(false);
   const [cohortOverview, setCohortOverview] = useState(null);
@@ -33,6 +34,20 @@ export default function ProfessorDashboard({
   const [publishedAssignments, setPublishedAssignments] = useState([]);
   const [courseSubmissions, setCourseSubmissions] = useState([]);
   const [learningSequence, setLearningSequence] = useState([]);
+  const [graphNodeFlags, setGraphNodeFlags] = useState({});
+  const [graphNodeDrafts, setGraphNodeDrafts] = useState({});
+  const [graphStatus, setGraphStatus] = useState("");
+  const [noteDraftByStudent, setNoteDraftByStudent] = useState({});
+  const [noteStatus, setNoteStatus] = useState("");
+  const [draggingSeqIndex, setDraggingSeqIndex] = useState(null);
+
+  const handleAuthFailure = (res) => {
+    if (res?.status === 401 && onAuthExpired) {
+      onAuthExpired();
+      return true;
+    }
+    return false;
+  };
 
   const normalizeTranscript = (value) => {
     if (Array.isArray(value)) return value;
@@ -53,13 +68,22 @@ export default function ProfessorDashboard({
     return [];
   };
 
+  const getHitlSdi = (item) => {
+    const value = item?.integrity?.sdi ?? item?.sdi;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
   const loadProfessorData = async () => {
     setBusy(true);
     try {
       const [overviewRes, queueRes] = await Promise.all([
-        ProfessorApi.cohortOverview(apiBase, token, profCourse, 7),
-        ProfessorApi.hitlQueue(apiBase, token),
+        ProfessorApi.cohortOverview(apiBase, token, profCourse, 7, {
+          forceRefresh: true,
+        }),
+        ProfessorApi.hitlQueue(apiBase, token, { forceRefresh: true }),
       ]);
+      if (handleAuthFailure(overviewRes) || handleAuthFailure(queueRes)) return;
       if (overviewRes.ok) setCohortOverview(overviewRes.data);
       if (queueRes.ok) {
         // PD-6: Sort queue to float Anomalous Input (SDI > 85%) to the very top.
@@ -68,8 +92,8 @@ export default function ProfessorDashboard({
           transcript: normalizeTranscript(item?.transcript),
         }));
         items.sort((a, b) => {
-          const aSdi = a.integrity?.sdi || 0;
-          const bSdi = b.integrity?.sdi || 0;
+          const aSdi = getHitlSdi(a) ?? 0;
+          const bSdi = getHitlSdi(b) ?? 0;
           if (aSdi > 85 && bSdi <= 85) return -1;
           if (bSdi > 85 && aSdi <= 85) return 1;
           return 0; // maintain default order beyond flag
@@ -89,6 +113,26 @@ export default function ProfessorDashboard({
     } finally {
       setBusy(false);
     }
+  };
+
+  const hydrateGraphData = (payload) => {
+    const data = payload || {};
+    setGraphData(data);
+    const nextFlags = {};
+    const nextDrafts = {};
+    for (const node of data.nodes || []) {
+      if (node.level !== "CONCEPT") continue;
+      nextFlags[node.id] = {
+        highPriority: String(node.priority || "normal").toLowerCase() === "high",
+        outOfScope: String(node.visibility || "global").toLowerCase() === "professor-only",
+      };
+      nextDrafts[node.id] = {
+        name: node.label || "",
+        description: node.description || "",
+      };
+    }
+    setGraphNodeFlags(nextFlags);
+    setGraphNodeDrafts(nextDrafts);
   };
 
   useEffect(() => {
@@ -116,6 +160,17 @@ export default function ProfessorDashboard({
     }
   }, [activeTab, token, profCourse]);
 
+  useEffect(() => {
+    if (!token) return;
+    if (activeTab !== "graph" && activeTab !== "learning_path") return;
+    if (graphData) return;
+
+    ProfessorApi.graphVisualization(apiBase, token, profCourse).then((res) => {
+      if (handleAuthFailure(res)) return;
+      if (res.ok) hydrateGraphData(res.data);
+    });
+  }, [activeTab, token, apiBase, profCourse, graphData]);
+
   const handleHitlAction = async (queueId, action) => {
     setBusy(true);
     try {
@@ -126,6 +181,7 @@ export default function ProfessorDashboard({
         queueId,
         payload,
       );
+      if (handleAuthFailure(res)) return;
       pushActivity({
         endpoint: `/professor/hitl-queue/${queueId}/action`,
         status: res.status,
@@ -169,9 +225,12 @@ export default function ProfessorDashboard({
     setBusy(true);
     try {
       const [studentsRes, cohortRes] = await Promise.all([
-        ProfessorApi.students(apiBase, token),
-        ProfessorApi.cohort(apiBase, token, profCourse),
+        ProfessorApi.students(apiBase, token, { forceRefresh: true }),
+        ProfessorApi.cohort(apiBase, token, profCourse, {
+          forceRefresh: true,
+        }),
       ]);
+      if (handleAuthFailure(studentsRes) || handleAuthFailure(cohortRes)) return;
 
       if (studentsRes.ok) {
         setStudentList(studentsRes.data?.students || []);
@@ -210,10 +269,17 @@ export default function ProfessorDashboard({
     setBusy(true);
     try {
       const [annRes, cwRes, subRes] = await Promise.all([
-        ProfessorApi.announcements(apiBase, token, profCourse),
-        ProfessorApi.coursework(apiBase, token, profCourse),
-        ProfessorApi.submissions(apiBase, token, profCourse),
+        ProfessorApi.announcements(apiBase, token, profCourse, {
+          forceRefresh: true,
+        }),
+        ProfessorApi.coursework(apiBase, token, profCourse, {
+          forceRefresh: true,
+        }),
+        ProfessorApi.submissions(apiBase, token, profCourse, {
+          forceRefresh: true,
+        }),
       ]);
+      if (handleAuthFailure(annRes) || handleAuthFailure(cwRes) || handleAuthFailure(subRes)) return;
       if (annRes.ok) setClassAnnouncements(annRes.data?.items || []);
       if (cwRes.ok) setPublishedAssignments(cwRes.data?.items || []);
       if (subRes.ok) setCourseSubmissions(subRes.data?.items || []);
@@ -224,21 +290,136 @@ export default function ProfessorDashboard({
 
   const loadLearningPathData = async () => {
     if (!token) return;
-    const res = await ProfessorApi.loadLearningPath(apiBase, token, profCourse);
-    if (res.ok) {
-      const ordered = res.data?.ordered_concept_ids || [];
-      setLearningSequence(Array.isArray(ordered) ? ordered : []);
+    setBusy(true);
+    try {
+      const [res, graphRes] = await Promise.all([
+        ProfessorApi.loadLearningPath(apiBase, token, profCourse, {
+          forceRefresh: true,
+        }),
+        ProfessorApi.graphVisualization(apiBase, token, profCourse, {
+          forceRefresh: true,
+        }),
+      ]);
+      if (handleAuthFailure(res) || handleAuthFailure(graphRes)) return;
+
+      if (!graphRes.ok) {
+        setGraphStatus(`Failed to load graph (${graphRes.status}).`);
+        return;
+      }
+
+      hydrateGraphData(graphRes.data);
+      const conceptIds = new Set(
+        (graphRes.data?.nodes || [])
+          .filter((n) => n.level === "CONCEPT")
+          .map((n) => n.id),
+      );
+
+      if (!res.ok) {
+        setGraphStatus(`Failed to load learning path (${res.status}).`);
+        return;
+      }
+
+      const orderedRaw = Array.isArray(res.data?.ordered_concept_ids)
+        ? res.data.ordered_concept_ids
+        : [];
+      const filtered = orderedRaw.filter((id) => conceptIds.has(id));
+      const removedCount = orderedRaw.length - filtered.length;
+      setLearningSequence(filtered);
+      setGraphStatus(
+        removedCount > 0
+          ? `Learning path loaded. Removed ${removedCount} stale concept id(s).`
+          : `Learning path loaded (${filtered.length} concepts).`,
+      );
+    } finally {
+      setBusy(false);
     }
   };
 
   const publishLearningPath = async () => {
     if (!token) return;
+    setBusy(true);
     const payload = {
       course_id: profCourse,
       ordered_concept_ids: learningSequence,
       partial_order_edges: [],
     };
-    await ProfessorApi.saveLearningPath(apiBase, token, payload);
+    try {
+      const res = await ProfessorApi.saveLearningPath(apiBase, token, payload);
+      if (handleAuthFailure(res)) return;
+      if (res.ok) {
+        setGraphStatus(`Learning path published (${learningSequence.length} concepts).`);
+      } else {
+        setGraphStatus(
+          `Failed to publish learning path (${res.status}): ${res.data?.detail || res.data?.message || "Unknown error"}`,
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const moveLearningNode = (fromIndex, toIndex) => {
+    if (fromIndex === null || toIndex === null || fromIndex === toIndex) return;
+    setLearningSequence((prev) => {
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= prev.length ||
+        toIndex >= prev.length
+      ) {
+        return prev;
+      }
+      const next = [...prev];
+      const [dragged] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, dragged);
+      return next;
+    });
+  };
+
+  const addConceptToLearningPath = (conceptId) => {
+    if (!conceptId) return;
+    setLearningSequence((prev) => (prev.includes(conceptId) ? prev : [...prev, conceptId]));
+  };
+
+  const removeConceptFromLearningPath = (conceptId) => {
+    setLearningSequence((prev) => prev.filter((id) => id !== conceptId));
+  };
+
+  const handleGraphDraftChange = (nodeId, field, value) => {
+    setGraphNodeDrafts((prev) => ({
+      ...prev,
+      [nodeId]: {
+        ...(prev[nodeId] || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveGraphConceptDraft = async (nodeId) => {
+    const draft = graphNodeDrafts[nodeId] || {};
+    const payload = {
+      name: String(draft.name || "").trim(),
+      description: String(draft.description || "").trim(),
+    };
+    const res = await ProfessorApi.updateConcept(apiBase, token, nodeId, payload);
+    if (handleAuthFailure(res)) return;
+    if (!res.ok) {
+      setGraphStatus(`Failed to update concept (${res.status}).`);
+      return;
+    }
+
+    setGraphStatus("Concept content updated.");
+    setGraphData((prev) => {
+      if (!prev?.nodes) return prev;
+      return {
+        ...prev,
+        nodes: prev.nodes.map((n) =>
+          n.id === nodeId
+            ? { ...n, label: payload.name || n.label, description: payload.description }
+            : n,
+        ),
+      };
+    });
   };
 
   const publishAnnouncement = () => {
@@ -252,6 +433,7 @@ export default function ProfessorDashboard({
       audience: "all",
     })
       .then((res) => {
+        if (handleAuthFailure(res)) return;
         if (res.ok) {
           setAnnouncementDraft("");
           loadCommandCenterData();
@@ -272,6 +454,7 @@ export default function ProfessorDashboard({
       rubric: assignmentDraft.rubric,
     })
       .then((res) => {
+        if (handleAuthFailure(res)) return;
         if (res.ok) {
           setAssignmentDraft((prev) => ({
             ...prev,
@@ -375,6 +558,21 @@ export default function ProfessorDashboard({
       .slice(0, 6);
   }, [studentWiseRows]);
 
+  const availableLearningConcepts = useMemo(() => {
+    const nodes = graphData?.nodes || [];
+    const concepts = nodes.filter((n) => n.level === "CONCEPT");
+    return concepts.filter((c) => !learningSequence.includes(c.id));
+  }, [graphData, learningSequence]);
+
+  const learningConceptLabelById = useMemo(() => {
+    const map = {};
+    for (const node of graphData?.nodes || []) {
+      if (node.level !== "CONCEPT") continue;
+      map[node.id] = node.label || node.name || node.id;
+    }
+    return map;
+  }, [graphData]);
+
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -382,6 +580,7 @@ export default function ProfessorDashboard({
     setBusy(true);
     try {
       const res = await ProfessorApi.ingest(apiBase, token, file, profCourse);
+      if (handleAuthFailure(res)) return;
       pushActivity({
         endpoint: `/ingest?course_id=${profCourse}`,
         status: res.status,
@@ -398,7 +597,8 @@ export default function ProfessorDashboard({
           token,
           profCourse,
         );
-        if (graphRes.ok) setGraphData(graphRes.data);
+        if (handleAuthFailure(graphRes)) return;
+        if (graphRes.ok) hydrateGraphData(graphRes.data);
       } else {
         alert(
           `Failed to ingest document: ${res.data?.detail || res.data?.message || "Unknown error"}`,
@@ -409,6 +609,90 @@ export default function ProfessorDashboard({
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
+
+  const handleGraphFlagToggle = async (node, field, checked) => {
+    if (!node || node.level !== "CONCEPT") return;
+    const nodeId = node.id;
+
+    setGraphNodeFlags((prev) => ({
+      ...prev,
+      [nodeId]: {
+        ...(prev[nodeId] || {}),
+        [field]: checked,
+      },
+    }));
+
+    const payload =
+      field === "highPriority"
+        ? { priority: checked ? "high" : "normal" }
+        : { visibility: checked ? "professor-only" : "global" };
+
+    const res = await ProfessorApi.updateConcept(apiBase, token, nodeId, payload);
+    if (handleAuthFailure(res)) return;
+    pushActivity({
+      endpoint: `/concept/${nodeId}`,
+      status: res.status,
+      ok: res.ok,
+      method: "PATCH",
+    });
+
+    if (res.ok) {
+      setGraphStatus("Concept metadata updated.");
+      return;
+    }
+
+    setGraphStatus(`Failed to update concept (${res.status}).`);
+    setGraphNodeFlags((prev) => ({
+      ...prev,
+      [nodeId]: {
+        ...(prev[nodeId] || {}),
+        [field]: !checked,
+      },
+    }));
+  };
+
+  const handleSaveProfessorNote = async () => {
+    if (!selectedStudentDetails?.id || !token) return;
+    const studentId = selectedStudentDetails.id;
+    const annotation = (noteDraftByStudent[studentId] || "").trim();
+
+    setBusy(true);
+    try {
+      const res = await ProfessorApi.annotateStudent(apiBase, token, {
+        student_id: studentId,
+        annotation,
+      });
+      if (handleAuthFailure(res)) return;
+      pushActivity({
+        endpoint: "/professor/annotate",
+        status: res.status,
+        ok: res.ok,
+        method: "POST",
+      });
+      setNoteStatus(res.ok ? "Note saved." : `Failed to save note (${res.status}).`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    const studentId = toStudentId(selectedStudent);
+    if (!studentId || !token) return;
+
+    ProfessorApi.getStudentAnnotation(apiBase, token, studentId, {
+      forceRefresh: true,
+    }).then((res) => {
+      if (handleAuthFailure(res) || !res.ok) return;
+      const latest = Array.isArray(res.data?.items) ? res.data.items[0] : null;
+      const noteText = latest?.annotation || "";
+      setNoteDraftByStudent((prev) => {
+        if (typeof prev[studentId] === "string" && prev[studentId].length > 0) {
+          return prev;
+        }
+        return { ...prev, [studentId]: noteText };
+      });
+    });
+  }, [selectedStudent, token, apiBase]);
 
   return (
     <div className="dashboard-grid">
@@ -948,12 +1232,13 @@ export default function ProfessorDashboard({
             </p>
             {hitlQueue.length > 0 ? (
               hitlQueue.map((item, idx) => {
-                const sdiWarning = item.integrity?.sdi > 85;
+                const sdi = getHitlSdi(item);
+                const sdiWarning = (sdi ?? -1) > 85;
                 const editObj = hitlEditState[item.queue_id] || {};
 
                 return (
                   <div
-                    key={idx}
+                    key={item.queue_id || item.defence_record_id || idx}
                     style={{
                       border: "1px solid var(--border-light)",
                       padding: "1.5rem",
@@ -987,7 +1272,7 @@ export default function ProfessorDashboard({
                       </div>
 
                       {/* PD-6: Flagging */}
-                      {item.integrity && item.integrity.sdi !== null && (
+                      {sdi !== null && (
                         <div
                           style={{
                             padding: "0.5rem 1rem",
@@ -1005,8 +1290,7 @@ export default function ProfessorDashboard({
                           <span
                             style={{ marginLeft: "0.5rem", fontWeight: 400 }}
                           >
-                            {" "}
-                            | SDI: {item.integrity.sdi}%
+                            {" "}| SDI: {sdi}%
                           </span>
                         </div>
                       )}
@@ -1231,7 +1515,13 @@ export default function ProfessorDashboard({
                         token,
                         profCourse,
                       );
-                      if (res.ok) setGraphData(res.data);
+                      if (handleAuthFailure(res)) return;
+                      if (res.ok) {
+                        hydrateGraphData(res.data);
+                        setGraphStatus("Graph map refreshed.");
+                      } else {
+                        setGraphStatus(`Failed to load graph (${res.status}).`);
+                      }
                     } finally {
                       setBusy(false);
                     }
@@ -1285,6 +1575,53 @@ export default function ProfessorDashboard({
                       {node.level || "Node Entity"}
                     </div>
 
+                    {node.level === "CONCEPT" && (
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: "0.4rem",
+                          marginBottom: "0.6rem",
+                        }}
+                      >
+                        <input
+                          value={graphNodeDrafts[node.id]?.name || ""}
+                          onChange={(e) =>
+                            handleGraphDraftChange(node.id, "name", e.target.value)
+                          }
+                          placeholder="Concept name"
+                          style={{
+                            fontSize: "0.82rem",
+                            border: "1px solid var(--border-light)",
+                            borderRadius: "4px",
+                            padding: "0.35rem 0.5rem",
+                          }}
+                        />
+                        <textarea
+                          value={graphNodeDrafts[node.id]?.description || ""}
+                          onChange={(e) =>
+                            handleGraphDraftChange(node.id, "description", e.target.value)
+                          }
+                          placeholder="Concept description"
+                          style={{
+                            minHeight: "54px",
+                            fontSize: "0.78rem",
+                            border: "1px solid var(--border-light)",
+                            borderRadius: "4px",
+                            padding: "0.35rem 0.5rem",
+                            resize: "vertical",
+                          }}
+                        />
+                        <button
+                          className="btn-solid"
+                          style={{ width: "auto", padding: "0.25rem 0.55rem", fontSize: "0.74rem" }}
+                          onClick={() => saveGraphConceptDraft(node.id)}
+                          disabled={!token || busy}
+                        >
+                          Save Concept
+                        </button>
+                      </div>
+                    )}
+
                     {/* Placeholder Editor Tags */}
                     <div
                       style={{
@@ -1295,6 +1632,14 @@ export default function ProfessorDashboard({
                         paddingTop: "0.5rem",
                       }}
                     >
+                      {(() => {
+                        const flags = graphNodeFlags[node.id] || {
+                          highPriority: false,
+                          outOfScope: false,
+                        };
+                        const isConceptNode = node.level === "CONCEPT";
+                        return (
+                          <>
                       <label
                         style={{
                           fontSize: "0.75rem",
@@ -1303,7 +1648,15 @@ export default function ProfessorDashboard({
                           gap: "0.3rem",
                         }}
                       >
-                        <input type="checkbox" /> High Priority
+                        <input
+                          type="checkbox"
+                          checked={Boolean(flags.highPriority)}
+                          disabled={!isConceptNode}
+                          onChange={(e) =>
+                            handleGraphFlagToggle(node, "highPriority", e.target.checked)
+                          }
+                        />{" "}
+                        High Priority
                       </label>
                       <label
                         style={{
@@ -1314,8 +1667,19 @@ export default function ProfessorDashboard({
                           color: "var(--text-tertiary)",
                         }}
                       >
-                        <input type="checkbox" /> Out of Scope
+                        <input
+                          type="checkbox"
+                          checked={Boolean(flags.outOfScope)}
+                          disabled={!isConceptNode}
+                          onChange={(e) =>
+                            handleGraphFlagToggle(node, "outOfScope", e.target.checked)
+                          }
+                        />{" "}
+                        Out of Scope
                       </label>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 ))}
@@ -1332,6 +1696,17 @@ export default function ProfessorDashboard({
                 <p style={{ color: "var(--text-tertiary)", margin: 0 }}>
                   Fetch node data to visualize graph dimensions.
                 </p>
+              </div>
+            )}
+            {graphStatus && (
+              <div
+                style={{
+                  marginTop: "0.75rem",
+                  fontSize: "0.82rem",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                {graphStatus}
               </div>
             )}
           </div>
@@ -1705,6 +2080,13 @@ export default function ProfessorDashboard({
                           Invisible to the student. Saves as overlay attribute.
                         </p>
                         <textarea
+                          value={noteDraftByStudent[selectedStudentDetails.id] || ""}
+                          onChange={(e) =>
+                            setNoteDraftByStudent((prev) => ({
+                              ...prev,
+                              [selectedStudentDetails.id]: e.target.value,
+                            }))
+                          }
                           placeholder="Record engagement markers, struggle points, or manual appraisal..."
                           style={{
                             width: "100%",
@@ -1721,10 +2103,23 @@ export default function ProfessorDashboard({
                           <button
                             className="btn-solid"
                             style={{ width: "auto", padding: "0.4rem 1rem" }}
+                            onClick={handleSaveProfessorNote}
+                            disabled={busy || !token}
                           >
                             Save Note
                           </button>
                         </div>
+                        {noteStatus && (
+                          <div
+                            style={{
+                              marginTop: "0.55rem",
+                              fontSize: "0.8rem",
+                              color: "var(--text-secondary)",
+                            }}
+                          >
+                            {noteStatus}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -1821,46 +2216,134 @@ export default function ProfessorDashboard({
                 border: "1px solid var(--border-light)",
               }}
             >
+              <div style={{ marginBottom: "1rem" }}>
+                <h4
+                  style={{
+                    margin: "0 0 0.5rem",
+                    fontSize: "0.85rem",
+                    textTransform: "uppercase",
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  Add Concepts
+                </h4>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                  {availableLearningConcepts.length > 0 ? (
+                    availableLearningConcepts.slice(0, 40).map((node) => (
+                      <button
+                        key={node.id}
+                        className="btn-solid"
+                        style={{
+                          width: "auto",
+                          padding: "0.25rem 0.5rem",
+                          background: "var(--surface-primary)",
+                          color: "var(--text-primary)",
+                          border: "1px solid var(--border-light)",
+                          fontSize: "0.75rem",
+                        }}
+                        onClick={() => addConceptToLearningPath(node.id)}
+                        disabled={!token || busy}
+                      >
+                        + {node.label || node.id}
+                      </button>
+                    ))
+                  ) : (
+                    <span style={{ fontSize: "0.78rem", color: "var(--text-tertiary)" }}>
+                      No additional concepts available.
+                    </span>
+                  )}
+                </div>
+              </div>
+
               <div
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  overflowX: "auto",
+                  display: "grid",
+                  gap: "0.55rem",
                   paddingBottom: "1rem",
-                  gap: "0.5rem",
                 }}
               >
                 {learningSequence.length > 0 ? (
                   learningSequence.map((topic, index) => (
                     <div
-                      key={index}
-                      style={{ display: "flex", alignItems: "center" }}
+                      key={`${topic}_${index}`}
+                      draggable
+                      onDragStart={() => setDraggingSeqIndex(index)}
+                      onDragEnd={() => setDraggingSeqIndex(null)}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={() => {
+                        moveLearningNode(draggingSeqIndex, index);
+                        setDraggingSeqIndex(null);
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "0.6rem",
+                        background: "var(--surface-primary)",
+                        border: "1px solid var(--border-light)",
+                        borderRadius: "6px",
+                        padding: "0.55rem 0.75rem",
+                      }}
                     >
                       <div
                         style={{
-                          background: "white",
-                          padding: "0.75rem 1.25rem",
-                          borderRadius: "4px",
-                          border: "1px solid var(--accent)",
-                          fontWeight: 500,
-                          fontSize: "0.9rem",
-                          whiteSpace: "nowrap",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.55rem",
                         }}
                       >
-                        {topic}
-                      </div>
-                      {index < learningSequence.length - 1 && (
-                        <div
+                        <span
                           style={{
-                            color: "var(--accent)",
-                            fontSize: "1.5rem",
-                            fontWeight: "bold",
-                            padding: "0 0.5rem",
+                            fontSize: "0.72rem",
+                            color: "var(--text-tertiary)",
+                            width: "1.3rem",
                           }}
                         >
-                          →
-                        </div>
-                      )}
+                          {index + 1}.
+                        </span>
+                        <span style={{ fontWeight: 600, fontSize: "0.84rem" }}>
+                          {learningConceptLabelById[topic] || topic}
+                        </span>
+                      </div>
+
+                      <div style={{ display: "flex", gap: "0.35rem" }}>
+                        <button
+                          className="btn-solid"
+                          style={{ width: "auto", padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
+                          onClick={() =>
+                            index > 0 && moveLearningNode(index, index - 1)
+                          }
+                          disabled={index === 0 || busy}
+                        >
+                          Up
+                        </button>
+                        <button
+                          className="btn-solid"
+                          style={{ width: "auto", padding: "0.2rem 0.45rem", fontSize: "0.72rem" }}
+                          onClick={() =>
+                            index < learningSequence.length - 1 &&
+                            moveLearningNode(index, index + 1)
+                          }
+                          disabled={index === learningSequence.length - 1 || busy}
+                        >
+                          Down
+                        </button>
+                        <button
+                          className="btn-solid"
+                          style={{
+                            width: "auto",
+                            padding: "0.2rem 0.45rem",
+                            fontSize: "0.72rem",
+                            background: "#fff1f2",
+                            color: "#9f1239",
+                            border: "1px solid #fecdd3",
+                          }}
+                          onClick={() => removeConceptFromLearningPath(topic)}
+                          disabled={busy}
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   ))
                 ) : (
@@ -1881,9 +2364,21 @@ export default function ProfessorDashboard({
                   marginTop: "1rem",
                 }}
               >
-                (MVP Simulator) Drag and drop topics from Graph Editor here to
-                sequence the curriculum overlay.
+                Drag rows to reorder, then publish to persist curriculum sequencing.
               </p>
+              {graphStatus && (
+                <p
+                  style={{
+                    marginTop: "0.75rem",
+                    marginBottom: 0,
+                    fontSize: "0.82rem",
+                    color: "var(--text-secondary)",
+                    textAlign: "center",
+                  }}
+                >
+                  {graphStatus}
+                </p>
+              )}
             </div>
           </div>
         )}

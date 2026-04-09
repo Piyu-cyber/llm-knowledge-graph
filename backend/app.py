@@ -254,12 +254,31 @@ def _build_student_progress(student_id: str, course_id: Optional[str]) -> Dict[s
             }
         )
 
+    weak_concepts = [
+        row.get("concept_name") for row in mastery_bands
+        if row.get("confidence_band") == "low" and row.get("concept_name")
+    ]
+    medium_concepts = [
+        row.get("concept_name") for row in mastery_bands
+        if row.get("confidence_band") == "medium" and row.get("concept_name")
+    ]
+
+    recommended_trajectory: List[str] = []
+    for name in weak_concepts[:3]:
+        recommended_trajectory.append(f"Revisit fundamentals: {name}")
+    if not recommended_trajectory:
+        for name in medium_concepts[:3]:
+            recommended_trajectory.append(f"Strengthen confidence: {name}")
+    if not recommended_trajectory and mastery_bands:
+        recommended_trajectory.append("Continue guided practice to maintain mastery momentum")
+
     return {
         "student_id": student_id,
         "course_id": course_id,
         "modules_explored": len(visited_modules),
         "concepts_visited": concepts_visited,
         "mastery": mastery_bands,
+        "recommended_trajectory": recommended_trajectory,
     }
 
 
@@ -1302,16 +1321,94 @@ def get_professor_hitl_queue(
     """Return HITL defence review queue entries visible to professor/admin."""
     try:
         role = current_user.get("role", "student")
+        course_ids = current_user.get("course_ids", [])
         if role == "admin":
             rows = graph_manager.list_hitl_queue()
         else:
-            rows = graph_manager.list_hitl_queue(current_user.get("course_ids", []))
-        normalized = []
+            rows = graph_manager.list_hitl_queue(course_ids)
+
+        # Build a normalized HITL queue from persisted queue rows + live defence records
+        # so professor review does not depend on demo-seeded hardcoded queue entries.
+        queue_by_record_id: Dict[str, Dict[str, Any]] = {}
         for row in rows:
+            record_id = str(row.get("defence_record_id") or row.get("submission_id") or "").strip()
+            if record_id:
+                queue_by_record_id[record_id] = row
+
+        defence_rows = graph_manager._read_json_list(graph_manager._defence_records_path())
+        pending_statuses = {"pending_professor_review", "pending_defence", "flagged", "pending_integrity_history"}
+        merged_rows: List[Dict[str, Any]] = []
+        for record in defence_rows:
+            record_status = str(record.get("status", "")).strip().lower()
+            if record_status not in pending_statuses:
+                continue
+
+            course_id = record.get("course_id")
+            if role != "admin" and course_ids and course_id not in set(course_ids):
+                continue
+
+            record_id = str(record.get("id", "")).strip()
+            queue_row = queue_by_record_id.get(record_id, {})
+
+            sdi_value = queue_row.get("sdi")
+            if sdi_value is None and isinstance(queue_row.get("integrity"), dict):
+                sdi_value = queue_row.get("integrity", {}).get("sdi")
+            if sdi_value is None:
+                sdi_value = record.get("sdi")
+
+            integrity_score = queue_row.get("integrity_score")
+            if integrity_score is None:
+                integrity_score = record.get("integrity_score")
+
+            sdi_visible = queue_row.get("sdi_visible")
+            if sdi_visible is None:
+                sdi_visible = record.get("sdi_visible", False)
+            sdi_visible = bool(sdi_visible)
+
+            ai_feedback = queue_row.get("ai_feedback")
+            if ai_feedback is None:
+                ai_feedback = record.get("ai_feedback") or record.get("final_feedback") or ""
+
+            merged_rows.append(
+                {
+                    **queue_row,
+                    "queue_id": str(queue_row.get("queue_id") or record_id),
+                    "defence_record_id": record_id,
+                    "submission_id": queue_row.get("submission_id") or record_id,
+                    "student_id": queue_row.get("student_id") or record.get("student_id"),
+                    "course_id": queue_row.get("course_id") or course_id,
+                    "ai_recommended_grade": queue_row.get("ai_recommended_grade", record.get("ai_recommended_grade")),
+                    "ai_feedback": ai_feedback,
+                    "transcript": queue_row.get("transcript") or record.get("transcript") or [],
+                    "sdi": sdi_value,
+                    "integrity_score": integrity_score,
+                    "sdi_visible": sdi_visible,
+                    "integrity_visibility": queue_row.get("integrity_visibility")
+                    or record.get("integrity_visibility")
+                    or "standard",
+                    "status": queue_row.get("status") or record.get("status"),
+                    "created_at": queue_row.get("created_at") or record.get("created_at"),
+                    "updated_at": queue_row.get("updated_at") or record.get("updated_at"),
+                }
+            )
+
+        merged_rows.sort(
+            key=lambda r: str(r.get("updated_at") or r.get("created_at") or ""),
+            reverse=True,
+        )
+
+        normalized = []
+        for row in merged_rows:
             sdi_visible = bool(row.get("sdi_visible", False))
             normalized.append(
                 {
                     **row,
+                    "integrity": {
+                        "sdi": row.get("sdi"),
+                        "integrity_score": row.get("integrity_score"),
+                        "sdi_visible": sdi_visible,
+                        "visibility_mode": row.get("integrity_visibility", "standard"),
+                    },
                     "integrity_display_mode": "full" if sdi_visible else "suppressed_cold_start",
                     "integrity_display_note": (
                         "SDI hidden until writing-history threshold is met."
@@ -1489,12 +1586,15 @@ def get_student_classroom_feed(
             aid = str(row.get("assignment_id", "")).strip()
             if not aid:
                 continue
-            status_by_assignment[aid] = {
+            candidate = {
                 "submission_id": row.get("id"),
                 "status": row.get("status", "pending_defence"),
                 "final_grade": row.get("final_grade"),
                 "updated_at": row.get("updated_at") or row.get("created_at"),
             }
+            existing = status_by_assignment.get(aid)
+            if not existing or str(candidate.get("updated_at") or "") >= str(existing.get("updated_at") or ""):
+                status_by_assignment[aid] = candidate
 
         enriched_coursework = []
         for item in coursework:
@@ -1648,6 +1748,8 @@ def get_submission_status(
             "workflow_status": status_text,
             "pending_professor_approval": status_text in ["pending_professor_review", "pending_defence"],
             "final_grade": record.get("final_grade"),
+            "transcript": record.get("transcript", []) or [],
+            "final_feedback": record.get("final_feedback") or record.get("ai_feedback"),
             "integrity": {
                 "integrity_score": None if (is_student and not sdi_visible) else record.get("integrity_score"),
                 "sdi": None if (is_student and not sdi_visible) else record.get("sdi"),
@@ -1723,6 +1825,21 @@ def act_on_hitl_queue(
                 queue_row = item
                 break
 
+        # Support synthetic queue IDs that map directly to defence records.
+        if not queue_row:
+            direct_record = graph_manager.get_defence_record(queue_id)
+            if direct_record:
+                queue_row = {
+                    "queue_id": queue_id,
+                    "defence_record_id": queue_id,
+                    "submission_id": queue_id,
+                    "student_id": direct_record.get("student_id"),
+                    "course_id": direct_record.get("course_id"),
+                    "ai_recommended_grade": direct_record.get("ai_recommended_grade"),
+                    "ai_feedback": direct_record.get("ai_feedback"),
+                    "status": direct_record.get("status"),
+                }
+
         if not queue_row:
             raise HTTPException(status_code=404, detail="Queue item not found")
 
@@ -1735,11 +1852,14 @@ def act_on_hitl_queue(
         }
 
         if action == "approve":
-            updates["final_grade"] = queue_row.get("ai_recommended_grade")
+            approved_grade = payload.get("ai_recommended_grade", queue_row.get("ai_recommended_grade"))
+            approved_feedback = payload.get("ai_feedback", queue_row.get("ai_feedback"))
+            updates["final_grade"] = approved_grade
+            updates["final_feedback"] = approved_feedback
             updates["status"] = "approved"
         elif action == "modify_approve":
-            updates["final_grade"] = payload.get("modified_grade")
-            updates["final_feedback"] = payload.get("modified_feedback")
+            updates["final_grade"] = payload.get("modified_grade", payload.get("ai_recommended_grade"))
+            updates["final_feedback"] = payload.get("modified_feedback", payload.get("ai_feedback"))
             updates["status"] = "approved"
         else:
             updates["status"] = "rejected_second_defence_required"
@@ -1839,12 +1959,30 @@ def get_cohort_overview(
             if delta_days >= inactivity_days:
                 inactive_students.append({"student_id": user_id, "days_since_engagement": delta_days})
 
+        total_students = len(student_last_seen)
+        avg_mastery_probability = 0.0
+        if overlays:
+            avg_mastery_probability = sum(float(o.get("mastery_probability", 0.0)) for o in overlays) / len(overlays)
+        average_mastery_pct = round(avg_mastery_probability * 100.0, 1)
+
+        # Frontend compatibility shape used by professor dashboard cards.
+        struggling_concepts = [
+            {"name": row.get("concept_name"), "slip": row.get("avg_slip")}
+            for row in struggle[:10]
+        ]
+        inactive_ids = [row.get("student_id") for row in inactive_students if row.get("student_id")]
+
         return {
             "status": "success",
             "course_id": course_id,
+            "total_students": total_students,
+            "struggling_students": len(inactive_ids),
+            "average_mastery": average_mastery_pct,
+            "struggling_concepts": struggling_concepts,
+            "inactive_students": inactive_ids,
+            "inactive_students_detail": sorted(inactive_students, key=lambda r: r["days_since_engagement"], reverse=True),
             "topic_mastery_distribution": topic_distribution,
             "highest_struggle_concepts": struggle[:10],
-            "inactive_students": sorted(inactive_students, key=lambda r: r["days_since_engagement"], reverse=True),
             "overlay_count": len(overlays),
         }
     except HTTPException:
@@ -1879,7 +2017,9 @@ def get_professor_graph_visualization(
                     "id": node_id,
                     "label": node.get("name", node_id),
                     "level": level,
+                    "description": node.get("description", ""),
                     "visibility": node.get("visibility", "global"),
+                    "priority": node.get("priority", "normal"),
                 }
             )
 
@@ -1988,7 +2128,13 @@ def get_professor_cohort(
                 students_data[student_id] = {
                     "student_id": student_id,
                     "avg_mastery": 0.0,
+                    "average_mastery": 0.0,
+                    "mastery_pct": 0.0,
+                    "low_confidence_count": 0,
+                    "interactions": 0,
+                    "at_risk_concepts": [],
                     "last_active": None,
+                    "last_active_at": None,
                     "concepts": [],
                     "struggling": []
                 }
@@ -2001,13 +2147,18 @@ def get_professor_cohort(
                 "mastery_probability": mastery,
                 "slip": slip
             })
+            students_data[student_id]["interactions"] += 1
+            if mastery < 0.4:
+                students_data[student_id]["low_confidence_count"] += 1
             
             # Track struggling concepts (highest slip)
             if slip > 0.4:
-                students_data[student_id]["struggling"].append({
+                item = {
                     "concept_name": concept.get("name", concept_id),
                     "slip": slip
-                })
+                }
+                students_data[student_id]["struggling"].append(item)
+                students_data[student_id]["at_risk_concepts"].append(item)
             
             # Track last active
             last_updated = node.get("last_updated") or node.get("created_at")
@@ -2016,19 +2167,60 @@ def get_professor_cohort(
                     ts = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
                     if students_data[student_id]["last_active"] is None or ts > students_data[student_id]["last_active"]:
                         students_data[student_id]["last_active"] = last_updated
+                        students_data[student_id]["last_active_at"] = last_updated
                 except:
                     pass
         
+        # Include enrolled students with no overlays yet so roster tables still work.
+        professor_courses = set(current_user.get("course_ids", []))
+        users_by_id = {
+            str(u.get("user_id", "")): u
+            for u in user_store.list_users()
+            if str(u.get("user_id", "")).strip()
+        }
+        for uid, profile in users_by_id.items():
+            if profile.get("role") != "student":
+                continue
+            if current_user.get("role") != "admin" and not (professor_courses & set(profile.get("course_ids", []))):
+                continue
+            if uid in students_data:
+                continue
+            students_data[uid] = {
+                "student_id": uid,
+                "name": profile.get("full_name") or profile.get("username") or uid,
+                "email": profile.get("email"),
+                "avg_mastery": 0.0,
+                "average_mastery": 0.0,
+                "mastery_pct": 0.0,
+                "low_confidence_count": 0,
+                "interactions": 0,
+                "at_risk_concepts": [],
+                "last_active": None,
+                "last_active_at": None,
+                "concepts": [],
+                "struggling": [],
+            }
+
         # Calculate averages
         for student_id in students_data:
             concepts = students_data[student_id]["concepts"]
             if concepts:
                 avg_mastery = sum(c["mastery_probability"] for c in concepts) / len(concepts)
-                students_data[student_id]["avg_mastery"] = round(avg_mastery, 3)
+                mastery_pct = round(avg_mastery * 100.0, 1)
+                students_data[student_id]["avg_mastery"] = mastery_pct
+                students_data[student_id]["average_mastery"] = mastery_pct
+                students_data[student_id]["mastery_pct"] = mastery_pct
             
             # Sort struggling by slip (descending)
             students_data[student_id]["struggling"].sort(key=lambda x: x["slip"], reverse=True)
             students_data[student_id]["struggling"] = students_data[student_id]["struggling"][:3]  # Top 3
+            students_data[student_id]["at_risk_concepts"] = students_data[student_id]["struggling"]
+
+            # Attach profile metadata when available.
+            profile = users_by_id.get(student_id, {})
+            if profile:
+                students_data[student_id]["name"] = profile.get("full_name") or profile.get("username") or student_id
+                students_data[student_id]["email"] = profile.get("email")
         
         return {"status": "success", "students": list(students_data.values())}
     
@@ -2344,6 +2536,30 @@ def annotate_student(
     
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/annotate", tags=["Professor"])
+def get_professor_annotations(
+    student_id: Optional[str] = None,
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Retrieve professor private annotations, optionally filtered by student."""
+    try:
+        annotations_path = os.path.join(graph_manager.data_dir, "professor_annotations.json")
+        annotations = graph_manager._read_json_list(annotations_path)
+
+        filtered = [
+            row
+            for row in annotations
+            if row.get("professor_id") == current_user.get("user_id")
+        ]
+        if student_id:
+            filtered = [row for row in filtered if str(row.get("student_id")) == str(student_id)]
+
+        filtered.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
+        return {"status": "success", "items": filtered}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

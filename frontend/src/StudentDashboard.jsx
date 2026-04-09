@@ -67,8 +67,21 @@ export default function StudentDashboard({
   const [upcomingCoursework, setUpcomingCoursework] = useState([]);
   const [discussionPosts, setDiscussionPosts] = useState([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
+  const [classroomStatus, setClassroomStatus] = useState({
+    loading: false,
+    error: "",
+    lastSyncedAt: null,
+  });
 
   const chatEndRef = useRef(null);
+
+  const handleAuthFailure = (res) => {
+    if (res?.status === 401 && onAuthExpired) {
+      onAuthExpired();
+      return true;
+    }
+    return false;
+  };
 
   useEffect(() => {
     if (chatEndRef.current) {
@@ -161,7 +174,7 @@ export default function StudentDashboard({
         method: "POST",
       });
       setImagePayload(null);
-      loadStudentData();
+      loadStudentData(true);
     } catch {
       appendMessage({
         role: "assistant",
@@ -174,16 +187,78 @@ export default function StudentDashboard({
     }
   };
 
-  const runLearningTool = async (promptText, label) => {
+  const buildLearningToolPrompt = (toolType, conceptName = "") => {
+    const weakList = weakConceptNames.length
+      ? weakConceptNames.join(", ")
+      : "none identified";
+
+    if (toolType === "quiz") {
+      return [
+        `You are generating a quiz for course ${chatCourse}.`,
+        `Prioritize weak concepts when relevant: ${weakList}.`,
+        "Return exactly 5 MCQs in this strict plain-text format:",
+        "Q1. <question>",
+        "A) <option>",
+        "B) <option>",
+        "C) <option>",
+        "D) <option>",
+        "Answer: <A|B|C|D>",
+        "Why: <one line explanation>",
+        "Repeat through Q5.",
+        "Do not include markdown tables or JSON.",
+      ].join("\n");
+    }
+
+    if (toolType === "notes") {
+      return [
+        `Create concise revision notes for course ${chatCourse}.`,
+        `Focus extra attention on weak concepts: ${weakList}.`,
+        "Use this exact section order:",
+        "1) Key Ideas (5 bullets)",
+        "2) Important Definitions (5 bullets)",
+        "3) Common Mistakes (3 bullets)",
+        "4) Quick Revision Checklist (5 checkboxes as '- [ ]')",
+        "Keep each bullet short and exam-ready.",
+      ].join("\n");
+    }
+
+    if (toolType === "flashcards") {
+      return [
+        `Generate 10 flashcards for course ${chatCourse}.`,
+        `Prioritize weak concepts: ${weakList}.`,
+        "Return each in plain text as:",
+        "Card 1",
+        "Front: <prompt>",
+        "Back: <answer>",
+        "Continue through Card 10.",
+      ].join("\n");
+    }
+
+    return `Teach ${conceptName} for course ${chatCourse} in beginner-friendly steps, then include 2 quick practice checks with short answers.`;
+  };
+
+  const runLearningTool = async (toolType, label, conceptName = "") => {
     if (!token || busy) return;
     appendMessage({ role: "student", content: label, isNew: false });
     setBusy(true);
     try {
+      const promptText = buildLearningToolPrompt(toolType, conceptName);
+      const toolSessionId = `${chatSession || "default"}::tool::${toolType}`;
+      setToolOutput("Generating output...");
+
       const data = await StudentApi.chat(apiBase, token, {
         message: promptText,
-        session_id: chatSession,
+        session_id: toolSessionId,
         course_id: chatCourse,
       });
+
+      pushActivity({
+        endpoint: "/chat",
+        status: data.status,
+        ok: data.ok,
+        method: "POST",
+      });
+
       if (!data.ok) {
         const detail =
           data.data?.detail || data.data?.message || "Request failed";
@@ -216,19 +291,47 @@ export default function StudentDashboard({
         contextRef: data.data?.active_agent || meta.intent || "LearningTool",
         isNew: !lowPowerMode,
       });
+    } catch {
+      const err = "Network or server error while running tool.";
+      setToolOutput(err);
+      appendMessage({
+        role: "assistant",
+        content: err,
+        contextRef: "System",
+        isNew: !lowPowerMode,
+      });
     } finally {
       setBusy(false);
     }
   };
 
-  const loadStudentData = async () => {
+  const loadStudentData = async (forceRefresh = false) => {
     if (!token) return;
+    if (!chatCourse) {
+      setClassroomStatus({
+        loading: false,
+        error: "Course ID is required to load classroom hub data.",
+        lastSyncedAt: null,
+      });
+      return;
+    }
+    setClassroomStatus((prev) => ({ ...prev, loading: true, error: "" }));
     try {
       const [progressRes, achievementsRes, classroomRes] = await Promise.all([
-        StudentApi.progress(apiBase, token, chatCourse),
-        StudentApi.achievements(apiBase, token),
-        StudentApi.classroomFeed(apiBase, token, chatCourse),
+        StudentApi.progress(apiBase, token, chatCourse, { forceRefresh }),
+        StudentApi.achievements(apiBase, token, { forceRefresh }),
+        StudentApi.classroomFeed(apiBase, token, chatCourse, { forceRefresh }),
       ]);
+      if (handleAuthFailure(progressRes) || handleAuthFailure(achievementsRes) || handleAuthFailure(classroomRes)) return;
+      if (!progressRes.ok || !achievementsRes.ok || !classroomRes.ok) {
+        const detail =
+          classroomRes.data?.detail ||
+          progressRes.data?.detail ||
+          achievementsRes.data?.detail ||
+          classroomRes.data?.message ||
+          "Failed to sync classroom data.";
+        setClassroomStatus((prev) => ({ ...prev, error: String(detail) }));
+      }
       if (progressRes.ok) setStudentProgress(progressRes.data);
       if (achievementsRes.ok)
         setStudentAchievements(achievementsRes.data?.achievements || []);
@@ -254,8 +357,17 @@ export default function StudentDashboard({
         );
         setDiscussionPosts(classroomRes.data?.discussions || []);
       }
+      setClassroomStatus((prev) => ({
+        ...prev,
+        lastSyncedAt: new Date().toISOString(),
+      }));
     } catch {
-      // silent fail
+      setClassroomStatus((prev) => ({
+        ...prev,
+        error: "Network error while syncing classroom hub.",
+      }));
+    } finally {
+      setClassroomStatus((prev) => ({ ...prev, loading: false }));
     }
   };
 
@@ -270,6 +382,7 @@ export default function StudentDashboard({
         chatCourse,
         selectedAssignmentId,
       );
+      if (handleAuthFailure(res)) return;
       if (res.ok) {
         setSubmissionStatus({
           status: "Submitted successfully!",
@@ -278,8 +391,10 @@ export default function StudentDashboard({
         });
         setSubmissionFile(null);
         setSelectedAssignmentId("");
+        await loadStudentData(true);
       } else {
-        setSubmissionStatus({ status: "Failed to submit." });
+        const detail = res.data?.detail || res.data?.message || "Unknown error";
+        setSubmissionStatus({ status: `Failed to submit (${res.status}): ${detail}` });
       }
       pushActivity({
         endpoint: "/student/submit-assignment",
@@ -294,9 +409,17 @@ export default function StudentDashboard({
 
   useEffect(() => {
     if (token) {
-      loadStudentData();
+      loadStudentData(true);
     }
   }, [token, chatCourse]);
+
+  useEffect(() => {
+    if (!token || studentExperienceMode !== "classroom" || !chatCourse) return;
+    const intervalId = setInterval(() => {
+      loadStudentData(true);
+    }, 15000);
+    return () => clearInterval(intervalId);
+  }, [token, chatCourse, studentExperienceMode]);
 
   const applySubmissionFile = (file) => {
     if (!file) return;
@@ -333,6 +456,7 @@ export default function StudentDashboard({
     setBusy(true);
     try {
       const res = await StudentApi.submissionStatus(apiBase, token, id);
+      if (handleAuthFailure(res)) return;
       if (res.ok) {
         setSubmissionStatus({
           status: "Status Pulled",
@@ -340,8 +464,13 @@ export default function StudentDashboard({
           workflow: res.data.workflow_status,
           pending_approval: res.data.pending_professor_approval,
           grade: res.data.final_grade,
+          finalFeedback: res.data.final_feedback || "",
+          integrity: res.data.integrity || null,
           transcript: res.data.transcript || [],
         });
+      } else {
+        const detail = res.data?.detail || res.data?.message || "Unknown error";
+        setSubmissionStatus({ status: `Failed to load status (${res.status}): ${detail}` });
       }
     } finally {
       setBusy(false);
@@ -384,6 +513,8 @@ export default function StudentDashboard({
     setStudentTab("defence");
   };
 
+  const classroomTitle = (chatCourse || "course").toUpperCase();
+
   return (
     <div className="student-platform-shell">
       <div className="student-experience-switch">
@@ -407,13 +538,25 @@ export default function StudentDashboard({
           {studentExperienceMode === "classroom" ? (
             <div className="classroom-hub">
               <div className="classroom-hero">
-                <h3>{chatCourse.toUpperCase()} Classroom</h3>
+                <h3>{classroomTitle} Classroom</h3>
                 <p>
                   Course progress {completedModules}/{courseModules.length}{" "}
                   modules completed. Use hub cards to manage learning,
                   assignments, and collaboration.
                 </p>
                 <div className="classroom-hero-actions">
+                  <button
+                    className="btn-solid"
+                    style={{
+                      background: "var(--bg-secondary)",
+                      color: "var(--text-primary)",
+                      border: "1px solid var(--border-light)",
+                    }}
+                    onClick={() => loadStudentData(true)}
+                    disabled={classroomStatus.loading || !token}
+                  >
+                    {classroomStatus.loading ? "Syncing..." : "Sync Hub"}
+                  </button>
                   <button
                     className="btn-solid"
                     onClick={() => setStudentTab("defence")}
@@ -432,6 +575,28 @@ export default function StudentDashboard({
                     Ask Live Tutor
                   </button>
                 </div>
+                {classroomStatus.error && (
+                  <div
+                    style={{
+                      marginTop: "0.65rem",
+                      fontSize: "0.82rem",
+                      color: "#9f1239",
+                    }}
+                  >
+                    {classroomStatus.error}
+                  </div>
+                )}
+                {classroomStatus.lastSyncedAt && !classroomStatus.error && (
+                  <div
+                    style={{
+                      marginTop: "0.65rem",
+                      fontSize: "0.78rem",
+                      color: "var(--text-tertiary)",
+                    }}
+                  >
+                    Last synced: {new Date(classroomStatus.lastSyncedAt).toLocaleTimeString()}
+                  </div>
+                )}
               </div>
 
               <div className="classroom-hub-grid">
@@ -482,17 +647,24 @@ export default function StudentDashboard({
                           >
                             {String(work.status || "open").replace("_", " ")}
                           </span>
-                          {work.status !== "approved" &&
-                            work.status !== "submitted" && (
-                              <button
-                                className="link-action"
-                                onClick={() =>
-                                  openCourseworkSubmission(work.id)
-                                }
-                              >
-                                Open submission
-                              </button>
-                            )}
+                          {work.submissionId ? (
+                            <button
+                              className="link-action"
+                              onClick={() => {
+                                setStudentTab("defence");
+                                loadSubmissionDetails(work.submissionId);
+                              }}
+                            >
+                              View status
+                            </button>
+                          ) : (
+                            <button
+                              className="link-action"
+                              onClick={() => openCourseworkSubmission(work.id)}
+                            >
+                              Open submission
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))
@@ -715,7 +887,7 @@ export default function StudentDashboard({
               >
                 <h3 style={{ margin: 0 }}>Knowledge Mastery</h3>
                 <button
-                  onClick={loadStudentData}
+                  onClick={() => loadStudentData(true)}
                   disabled={!token}
                   style={{
                     fontSize: "0.8rem",
@@ -917,11 +1089,29 @@ export default function StudentDashboard({
                       ⚠️ Scores & AI feedback hidden pending Professor approval.
                     </div>
                   ) : (
-                    submissionStatus.grade && (
+                    submissionStatus.grade !== null &&
+                    submissionStatus.grade !== undefined && (
                       <div style={{ fontWeight: 600 }}>
                         Official Grade: {submissionStatus.grade}
                       </div>
                     )
+                  )}
+
+                  {submissionStatus.finalFeedback && (
+                    <div style={{ marginTop: "0.35rem" }}>
+                      <strong>Final Feedback:</strong> {submissionStatus.finalFeedback}
+                    </div>
+                  )}
+
+                  {submissionStatus.integrity?.display_note && (
+                    <div
+                      style={{
+                        marginTop: "0.35rem",
+                        color: "var(--text-secondary)",
+                      }}
+                    >
+                      {submissionStatus.integrity.display_note}
+                    </div>
                   )}
 
                   {/* Display Defence Transcript */}
@@ -1128,10 +1318,7 @@ export default function StudentDashboard({
                     <button
                       className="btn-solid"
                       onClick={() =>
-                        runLearningTool(
-                          "Using course context, generate a 5-question MCQ quiz with answer key and one-line explanations.",
-                          "Generate a 5-question quiz",
-                        )
+                        runLearningTool("quiz", "Generate a 5-question quiz")
                       }
                       disabled={busy || !token}
                     >
@@ -1141,7 +1328,7 @@ export default function StudentDashboard({
                       className="btn-solid"
                       onClick={() =>
                         runLearningTool(
-                          "Create concise revision notes from course material in bullet points and include key definitions.",
+                          "notes",
                           "Generate concise revision notes",
                         )
                       }
@@ -1152,10 +1339,7 @@ export default function StudentDashboard({
                     <button
                       className="btn-solid"
                       onClick={() =>
-                        runLearningTool(
-                          "Generate 10 flashcards from course context with front and back format.",
-                          "Generate flashcards",
-                        )
+                        runLearningTool("flashcards", "Generate flashcards")
                       }
                       disabled={busy || !token}
                     >
@@ -1178,10 +1362,7 @@ export default function StudentDashboard({
                             border: "1px solid var(--border-light)",
                           }}
                           onClick={() =>
-                            runLearningTool(
-                              `Teach me ${concept} as a beginner, then give 2 quick practice checks.`,
-                              `Drill concept: ${concept}`,
-                            )
+                            runLearningTool("drill", `Drill concept: ${concept}`, concept)
                           }
                           disabled={busy || !token}
                         >

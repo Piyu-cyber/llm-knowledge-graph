@@ -934,6 +934,11 @@ class GraphManager:
             node = self.nodes_data.get(concept_id)
             if not node or node.get("level") != "CONCEPT":
                 return {"status": "error", "message": f"Invalid concept id in ordered path: {concept_id}"}
+            if str(node.get("course_owner", "")) != str(course_id):
+                return {
+                    "status": "error",
+                    "message": f"Concept {concept_id} does not belong to course {course_id}",
+                }
 
         for edge in partial_order_edges:
             source_id = edge.get("source_id")
@@ -942,6 +947,11 @@ class GraphManager:
             target = self.nodes_data.get(target_id)
             if not source or source.get("level") != "CONCEPT" or not target or target.get("level") != "CONCEPT":
                 return {"status": "error", "message": "Invalid concept id in partial order edges"}
+            if str(source.get("course_owner", "")) != str(course_id) or str(target.get("course_owner", "")) != str(course_id):
+                return {
+                    "status": "error",
+                    "message": "Partial order edges must reference concepts from the same course",
+                }
 
         paths = self._read_json_list(self._learning_paths_path())
         payload = {
@@ -953,6 +963,23 @@ class GraphManager:
         paths = [row for row in paths if str(row.get("course_id")) != str(course_id)]
         paths.append(payload)
         self._write_json_list(self._learning_paths_path(), paths)
+
+        # Replace prior CURRICULUM_PATH edges for this course to avoid duplicate edge accumulation.
+        existing_edges = self._edge_records()
+        retained_edges = []
+        for edge in existing_edges:
+            edge_data = edge.get("data") or {}
+            if edge_data.get("relation") != "CURRICULUM_PATH":
+                retained_edges.append(edge)
+                continue
+
+            source_owner = str(self.nodes_data.get(edge.get("source"), {}).get("course_owner", ""))
+            target_owner = str(self.nodes_data.get(edge.get("target"), {}).get("course_owner", ""))
+            if source_owner == str(course_id) or target_owner == str(course_id):
+                continue
+            retained_edges.append(edge)
+
+        self._rebuild_graph(retained_edges)
 
         # Add explicit curriculum path edges so recommendation traversal can consume weights.
         for idx in range(len(ordered_concept_ids) - 1):

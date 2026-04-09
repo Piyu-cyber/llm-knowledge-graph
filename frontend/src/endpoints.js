@@ -71,23 +71,29 @@ export const AuthApi = {
 export const StudentApi = {
   chat: (apiBase, token, payload) =>
     apiRequest(apiBase, "/chat", { method: "POST", token, body: payload }),
-  progress: (apiBase, token, courseId) =>
+  progress: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(apiBase, `/student/progress${qs({ course_id: courseId })}`, {
       token,
       cacheTtlMs: 12000,
+      forceRefresh,
     }),
-  classroomFeed: (apiBase, token, courseId) =>
+  classroomFeed: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(
       apiBase,
       `/student/classroom-feed${qs({ course_id: courseId })}`,
-      { token, cacheTtlMs: 12000 },
+      { token, cacheTtlMs: 12000, forceRefresh },
     ),
-  achievements: (apiBase, token) =>
-    apiRequest(apiBase, "/student/achievements", { token, cacheTtlMs: 12000 }),
-  submissions: (apiBase, token, courseId) =>
+  achievements: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/student/achievements", {
+      token,
+      cacheTtlMs: 12000,
+      forceRefresh,
+    }),
+  submissions: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(apiBase, `/student/submissions${qs({ course_id: courseId })}`, {
       token,
       cacheTtlMs: 12000,
+      forceRefresh,
     }),
   submitAssignment: (apiBase, token, file, courseId, assignmentId = "") => {
     const fd = new FormData();
@@ -111,8 +117,12 @@ export const StudentApi = {
 };
 
 export const ProfessorApi = {
-  hitlQueue: (apiBase, token) =>
-    apiRequest(apiBase, "/professor/hitl-queue", { token, cacheTtlMs: 10000 }),
+  hitlQueue: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/professor/hitl-queue", {
+      token,
+      cacheTtlMs: 10000,
+      forceRefresh,
+    }),
   hitlAction: (apiBase, token, queueId, payload) =>
     apiRequest(
       apiBase,
@@ -123,24 +133,35 @@ export const ProfessorApi = {
         body: payload,
       },
     ),
-  cohortOverview: (apiBase, token, courseId, inactivityDays = 7) =>
+  cohortOverview: (
+    apiBase,
+    token,
+    courseId,
+    inactivityDays = 7,
+    { forceRefresh = false } = {},
+  ) =>
     apiRequest(
       apiBase,
       `/professor/cohort-overview${qs({ course_id: courseId, inactivity_days: inactivityDays })}`,
-      { token, cacheTtlMs: 10000 },
+      { token, cacheTtlMs: 10000, forceRefresh },
     ),
-  cohort: (apiBase, token, courseId) =>
+  cohort: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(apiBase, `/professor/cohort${qs({ course_id: courseId })}`, {
       token,
       cacheTtlMs: 10000,
+      forceRefresh,
     }),
-  students: (apiBase, token) =>
-    apiRequest(apiBase, "/professor/students", { token, cacheTtlMs: 10000 }),
-  announcements: (apiBase, token, courseId) =>
+  students: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/professor/students", {
+      token,
+      cacheTtlMs: 10000,
+      forceRefresh,
+    }),
+  announcements: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(
       apiBase,
       `/professor/classroom-announcements${qs({ course_id: courseId })}`,
-      { token, cacheTtlMs: 8000 },
+      { token, cacheTtlMs: 8000, forceRefresh },
     ),
   createAnnouncement: (apiBase, token, payload) =>
     apiRequest(apiBase, "/professor/classroom-announcements", {
@@ -148,10 +169,11 @@ export const ProfessorApi = {
       token,
       body: payload,
     }),
-  coursework: (apiBase, token, courseId) =>
+  coursework: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(apiBase, `/professor/coursework${qs({ course_id: courseId })}`, {
       token,
       cacheTtlMs: 8000,
+      forceRefresh,
     }),
   createCoursework: (apiBase, token, payload) =>
     apiRequest(apiBase, "/professor/coursework", {
@@ -159,17 +181,17 @@ export const ProfessorApi = {
       token,
       body: payload,
     }),
-  submissions: (apiBase, token, courseId) =>
+  submissions: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(
       apiBase,
       `/professor/submissions${qs({ course_id: courseId })}`,
-      { token, cacheTtlMs: 8000 },
+      { token, cacheTtlMs: 8000, forceRefresh },
     ),
-  graphVisualization: (apiBase, token, courseId) =>
+  graphVisualization: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(
       apiBase,
       `/professor/graph-visualization${qs({ course_id: courseId })}`,
-      { token, cacheTtlMs: 10000 },
+      { token, cacheTtlMs: 10000, forceRefresh },
     ),
   updateConcept: (apiBase, token, conceptId, payload) =>
     apiRequest(apiBase, `/concept/${encodeURIComponent(conceptId)}`, {
@@ -177,11 +199,28 @@ export const ProfessorApi = {
       token,
       body: payload,
     }),
-  loadLearningPath: (apiBase, token, courseId) =>
+  annotateStudent: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/annotate", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  getStudentAnnotation: (
+    apiBase,
+    token,
+    studentId,
+    { forceRefresh = false } = {},
+  ) =>
+    apiRequest(
+      apiBase,
+      `/professor/annotate${qs({ student_id: studentId })}`,
+      { token, cacheTtlMs: 5000, forceRefresh },
+    ),
+  loadLearningPath: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(
       apiBase,
       `/professor/learning-path${qs({ course_id: courseId })}`,
-      { token, cacheTtlMs: 10000 },
+      { token, cacheTtlMs: 10000, forceRefresh },
     ),
   saveLearningPath: (apiBase, token, payload) =>
     apiRequest(apiBase, "/professor/learning-path", {
