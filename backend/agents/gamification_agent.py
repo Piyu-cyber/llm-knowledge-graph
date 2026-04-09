@@ -5,7 +5,7 @@ LangGraph node for awarding achievement badges and tracking progress.
 Features:
 - Checks milestone conditions after every sub-agent response
 - Awards badges: Explorer, Mastery, Module Complete
-- Writes Achievement nodes to Neo4j
+- Writes Achievement nodes to local graph store
 - Achievements are private (not visible to other students)
 """
 
@@ -55,10 +55,10 @@ class GamificationAgent:
     2. Mastery: mastery_probability > 0.8 on any concept
     3. Module Complete: All concepts in a module completed
     
-    All achievements are stored in Neo4j and are private per student.
+    All achievements are stored in the local graph store and are private per student.
     """
     
-    def __init__(self, data_dir: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None, **kwargs):
         """
         Initialize Gamification Agent.
         
@@ -113,7 +113,7 @@ class GamificationAgent:
             if module_complete:
                 new_achievements.append(module_complete)
             
-            # Write achievements to Neo4j
+            # Persist achievements to local graph store
             for achievement in new_achievements:
                 self._write_achievement(achievement)
                 logger.info(f"Achievement awarded: {achievement.achievement_type} "
@@ -317,7 +317,7 @@ class GamificationAgent:
     
     def _write_achievement(self, achievement: Achievement) -> bool:
         """
-        Write Achievement node to Neo4j.
+        Write Achievement node to local graph store.
         
         Creates an Achievement node linked to the student.
         Achievements are private - only visible to that student.

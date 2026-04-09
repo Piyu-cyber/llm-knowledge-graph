@@ -14,15 +14,15 @@ import os
 from typing import Dict, List, Optional
 from datetime import datetime
 
-from groq import Groq
-from backend.agents.state import AgentState, EvalState
-from backend.services.crag_service import CRAGService
-from backend.services.cognitive_engine import CognitiveEngine
-from backend.services.llm_service import LLMService
-from backend.services.rag_service import RAGService
-from backend.services.graph_service import GraphService
-from backend.db.graph_manager import GraphManager
-from backend.db.neo4j_schema import DefenceRecord
+from .state import AgentState, EvalState
+from ..services.crag_service import CRAGService
+from ..services.cognitive_engine import CognitiveEngine
+from ..services.llm_service import LLMService
+from ..services.llm_router import LLMRouter
+from ..services.rag_service import RAGService
+from ..services.graph_service import GraphService
+from ..db.graph_manager import GraphManager
+from ..db.graph_schema import DefenceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -44,23 +44,16 @@ class EvaluatorAgent:
     - Student explicitly ends after turn 3
     """
     
-    def __init__(self,
-                 groq_api_key: Optional[str] = None,
-                 data_dir: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None, **kwargs):
         """
         Initialize Evaluator Agent.
         
         Args:
-            groq_api_key: Groq API key
             data_dir: Path to data directory for graph persistence
         """
         from dotenv import load_dotenv
         
         load_dotenv()
-        
-        self.groq_key = groq_api_key or os.getenv("GROQ_API_KEY")
-        self.client = Groq(api_key=self.groq_key) if self.groq_key else None
-        self.model = "llama-3.3-70b-versatile"
         
         # Initialize services using RustWorkX-based GraphManager
         self.graph_manager = GraphManager(
@@ -68,6 +61,7 @@ class EvaluatorAgent:
         )
         
         self.llm_service = LLMService()
+        self.llm_router = LLMRouter()
         self.rag_service = RAGService()
         self.graph_service = GraphService(self.graph_manager)
         self.cognitive_engine = CognitiveEngine()
@@ -191,7 +185,7 @@ class EvaluatorAgent:
                     anomalous_input=False
                 )
                 
-                # Write to Neo4j
+                # Persist to local graph store
                 self._write_defence_record(record, course_id=state.metadata.get("course_id", "unknown"))
                 
                 # Store record ID in state
@@ -498,7 +492,7 @@ Return ONLY the JSON.
     
     def _write_defence_record(self, record: DefenceRecord, course_id: str = "unknown") -> bool:
         """
-        Write DefenceRecord to Neo4j.
+        Write DefenceRecord to local graph store.
         
         Args:
             record: DefenceRecord instance
@@ -520,7 +514,7 @@ Return ONLY the JSON.
     
     def _call_llm(self, prompt: str, temperature: float = 0.7) -> str:
         """
-        Call Groq LLM safely.
+        Route evaluator prompts through centralized router.
         
         Args:
             prompt: Input prompt
@@ -530,16 +524,16 @@ Return ONLY the JSON.
             Model response or empty string
         """
         try:
-            if self.client is None:
-                return ""
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
+            route_result = self.llm_router.route(
+                task="evaluator_defence",
+                prompt=prompt,
                 temperature=temperature,
-                top_p=0.95,
-                max_tokens=512
+                max_tokens=512,
+                use_cache=False,
             )
-            return response.choices[0].message.content.strip()
+            if route_result.get("status") == "success":
+                return (route_result.get("text") or "").strip()
+            return ""
         except Exception as e:
             logger.error(f"LLM call error: {str(e)}")
             return ""

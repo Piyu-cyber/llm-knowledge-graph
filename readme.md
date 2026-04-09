@@ -156,7 +156,7 @@ Operational runbook and full API verification commands are documented in `docs/P
 |-----------|-----------------|--------|
 | **Knowledge Graph** | RustWorkX (local JSON persistence) | ✅ Operational |
 | **Vector Store** | FAISS with sentence-transformers | ✅ Operational |
-| **User Overlays** | StudentOverlay (Neo4j-compatible schema) | ✅ Complete |
+| **User Overlays** | StudentOverlay (Graph schema) | ✅ Complete |
 | **Defence Records** | Submission evaluation storage | ✅ Complete |
 | **Session Persistence** | In-memory + dump to JSON | ✅ Complete |
 
@@ -376,12 +376,15 @@ python -c "import faiss; import rustworkx; import groq; print('✅ All imports s
 # Local directory where RustWorkX JSON data (nodes/edges) will be stored
 GRAPH_DATA_DIR=data/graph
 
-# ==================== LLM API ====================
-GROQ_API_KEY=gsk_xxxxxxxxxxxxx  # Get from console.groq.com
-GROQ_MODEL=llama-3.3-70b-versatile
+# ==================== LLM Providers (router-managed) ====================
+GROQ_API_KEY=gsk_xxxxxxxxxxxxx  # Optional provider 1
+CEREBRAS_API_KEY=your_cerebras_key_here  # Optional provider 2
+LLMROUTER_BACKOFF_SECONDS=20
+LLMROUTER_MAX_BACKOFF_SECONDS=180
+LLMROUTER_SPECULATIVE_ENABLED=true
+LLMROUTER_SPECULATIVE_MIN_PROMPT_CHARS=120
 
 # ==================== Embeddings ====================
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 EMBEDDING_DIM=2048
 
 # ==================== Vector Search ====================
@@ -726,14 +729,14 @@ omniprof/
 │   │   ├── rag_service.py        # Vector retrieval
 │   │   ├── crag_service.py       # Corrective RAG
 │   │   ├── llm_service.py        # Groq LLM interface
-│   │   ├── graph_service.py      # Neo4j queries
+│   │   ├── graph_service.py      # Graph queries
 │   │   ├── cognitive_engine.py   # BKT implementation
 │   │   ├── ingestion_service.py  # Document processing
 │   │   └── __init__.py
 │   │
 │   ├── db/                       # Database layer
-│   │   ├── neo4j_driver.py       # Neo4j connection
-│   │   ├── neo4j_schema.py       # Schema definitions
+│   │   ├── (removed)       # RustWorkX DB connection
+│   │   ├── graph_schema.py       # Schema definitions
 │   │   └── __init__.py
 │   │
 │   ├── auth/                     # Authentication

@@ -19,16 +19,16 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 
-from groq import Groq
-from backend.agents.state import AgentState, GraphContext
-from backend.services.crag_service import CRAGService
-from backend.services.cognitive_engine import CognitiveEngine
-from backend.services.llm_service import LLMService
-from backend.services.rag_service import RAGService
-from backend.services.graph_service import GraphService
-from backend.services.memory_service import MemoryService
-from backend.db.neo4j_driver import Neo4jGraphManager
-from backend.auth.rbac import UserContext
+from .state import AgentState, GraphContext
+from ..services.crag_service import CRAGService
+from ..services.cognitive_engine import CognitiveEngine
+from ..services.llm_service import LLMService
+from ..services.llm_router import LLMRouter
+from ..services.rag_service import RAGService
+from ..services.graph_service import GraphService
+from ..services.memory_service import MemoryService
+from ..db.graph_manager import GraphManager
+from ..auth.rbac import UserContext
 
 logger = logging.getLogger(__name__)
 
@@ -59,33 +59,23 @@ class TAAgent:
     The agent acts as a LangGraph node in the multiagent orchestration system.
     """
     
-    def __init__(self, 
-                 groq_api_key: Optional[str] = None,
-                 neo4j_uri: Optional[str] = None,
-                 neo4j_user: Optional[str] = None,
-                 neo4j_password: Optional[str] = None):
+    def __init__(self, data_dir=None, **kwargs):
         """
         Initialize TA Agent with services.
         
         Args:
-            groq_api_key: Groq API key (defaults to env variable)
-            neo4j_uri: Neo4j database URI
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
+            data_dir: Path to data directory for graph persistence
         """
         import os
         from dotenv import load_dotenv
         
         load_dotenv()
         
-        self.groq_key = groq_api_key or os.getenv("GROQ_API_KEY")
-        self.client = Groq(api_key=self.groq_key) if self.groq_key else None
-        self.model = "llama-3.3-70b-versatile"  # Larger model for better reasoning
-        
         # Initialize services
-        self.graph_manager = Neo4jGraphManager()
+        self.graph_manager = GraphManager()
         
         self.llm_service = LLMService()
+        self.llm_router = LLMRouter()
         self.rag_service = RAGService()
         self.graph_service = GraphService(self.graph_manager)
         self.cognitive_engine = CognitiveEngine()
@@ -95,9 +85,6 @@ class TAAgent:
             llm_service=self.llm_service
         )
         self.memory_service = MemoryService(
-            neo4j_uri=neo4j_uri,
-            neo4j_user=neo4j_user,
-            neo4j_password=neo4j_password,
             rag_service=self.rag_service
         )
         
@@ -134,16 +121,12 @@ class TAAgent:
             
             # Step 1: Run CRAG loop
             logger.debug(f"Running CRAG loop for query: {state.current_input}")
-            try:
-                crag_result = self._run_crag_loop(
-                    state.current_input,
-                    student_id=state.student_id,
-                    user_role=state.metadata.get("user_role", "student"),
-                    course_ids=state.metadata.get("course_ids", []),
-                )
-            except TypeError:
-                # Backward-compatible fallback for tests/mocks expecting old signature.
-                crag_result = self._run_crag_loop(state.current_input)
+            crag_result = self._run_crag_loop(
+                state.current_input,
+                student_id=state.student_id,
+                user_role=state.metadata.get("user_role", "student"),
+                course_ids=state.metadata.get("course_ids", []),
+            )
             
             # Step 2: Extract concepts from query and response
             logger.debug("Extracting concepts from response")
@@ -395,11 +378,7 @@ class TAAgent:
                 f"where appropriate. Keep the core information but add personal touches."
             )
             
-            enhanced = self.llm_service.generate_response(
-                prompt=enhancement_prompt,
-                system_prompt="You are a personalized tutoring assistant. "
-                            "Enhance answers by incorporating student's past learning context."
-            )
+            enhanced = self._call_llm(enhancement_prompt)
             
             return enhanced if enhanced else base_answer
             
@@ -462,7 +441,7 @@ Return ONLY the JSON, no other text.
         """
         Get student's mastery_probability for each concept.
         
-        Retrieves from StudentOverlay in Neo4j.
+        Retrieves from StudentOverlay in local RustWorkX graph store.
         
         Args:
             student_id: Student user ID
@@ -913,7 +892,7 @@ Keep it to 1-2 sentences.
     
     def _call_llm(self, prompt: str, temperature: float = 0.7) -> str:
         """
-        Call Groq LLM safely with error handling.
+        Route LLM call through centralized router.
         
         Args:
             prompt: Input prompt
@@ -923,16 +902,16 @@ Keep it to 1-2 sentences.
             Model response or empty string on error
         """
         try:
-            if self.client is None:
-                return ""
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
+            route_result = self.llm_router.route(
+                task="ta_tutoring",
+                prompt=prompt,
                 temperature=temperature,
-                top_p=0.95,
-                max_tokens=1024
+                max_tokens=1024,
+                use_cache=False,
             )
-            return response.choices[0].message.content.strip()
+            if route_result.get("status") == "success":
+                return (route_result.get("text") or "").strip()
+            return ""
         except Exception as e:
             logger.error(f"LLM call error: {str(e)}")
             return ""

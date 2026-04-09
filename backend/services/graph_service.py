@@ -7,8 +7,8 @@ Module -> Topic -> Concept -> Fact with student overlays
 import logging
 import math
 from typing import List, Dict, Optional
-from backend.db.neo4j_driver import Neo4jGraphManager
-from backend.db.neo4j_schema import Visibility
+from backend.db.graph_manager import GraphManager
+from backend.db.graph_schema import Visibility
 from backend.auth.rbac import UserContext, RBACFilter, RBACValidator, RBACLogger
 from backend.services.jina_multimodal_service import JinaMultimodalService
 

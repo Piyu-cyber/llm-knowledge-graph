@@ -16,7 +16,7 @@ try:
 except ImportError:
     raise ImportError("rustworkx is required: pip install rustworkx")
 
-from backend.db.neo4j_schema import (
+from backend.db.graph_schema import (
     Module, Topic, Concept, Fact, StudentOverlay, SemanticNode, MemoryAnchor,
     GraphEdge, GraphValidator, NodeLevel, Visibility, EdgeType
 )
@@ -1251,7 +1251,7 @@ class GraphManager:
 
 
 # Alias for backward compatibility
-class Neo4jGraphManager(GraphManager):
+class GraphManager(GraphManager):
     """Backward compatibility alias - uses RustWorkX backend"""
     
     def __init__(self, uri: Optional[str] = None, user: Optional[str] = None,

@@ -1,8 +1,8 @@
-from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 import os
 import pickle
+from backend.services.jina_multimodal_service import JinaMultimodalService
 
 INDEX_PATH = "rag_index.faiss"
 CHUNKS_PATH = "rag_chunks.pkl"
@@ -10,7 +10,7 @@ CHUNKS_PATH = "rag_chunks.pkl"
 
 class RAGService:
     def __init__(self):
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        self.embedding_service = JinaMultimodalService()
         self.index = None
         self.chunks = []
         self._load()  # 🔥 load persisted data
@@ -72,15 +72,23 @@ class RAGService:
             print("⚠️ No valid chunks created")
             return
 
-        embeddings = self.model.encode(chunks, normalize_embeddings=True)
+        embeddings = self.get_embeddings(chunks)
+        if not embeddings:
+            print("⚠️ Failed to generate embeddings")
+            return
+        embeddings = np.array(embeddings, dtype=np.float32)
 
         # 🔥 Initialize FAISS if needed
         if self.index is None:
             dim = embeddings.shape[1]
             self.index = faiss.IndexFlatL2(dim)
+        elif getattr(self.index, "d", embeddings.shape[1]) != embeddings.shape[1]:
+            # Reset stale index when embedding dimensionality changes.
+            self.index = faiss.IndexFlatL2(embeddings.shape[1])
+            self.chunks = []
 
         # 🔥 Add embeddings
-        self.index.add(np.array(embeddings))
+        self.index.add(embeddings)
         self.chunks.extend(chunks)
 
         # 🔥 Persist
@@ -100,7 +108,10 @@ class RAGService:
             return self.chunks[:k]
 
         try:
-            q_embed = self.model.encode([query], normalize_embeddings=True)
+            q_embed = self.get_embeddings([query])
+            if not q_embed:
+                return []
+            q_embed = np.array(q_embed, dtype=np.float32)
 
             # 🔥 Safe k handling
             k = min(k, len(self.chunks))
@@ -117,3 +128,13 @@ class RAGService:
         except Exception as e:
             print("❌ RAG RETRIEVE ERROR:", str(e))
             return []
+
+    def get_embeddings(self, texts):
+        if not texts:
+            return []
+        vectors = []
+        for text in texts:
+            vector = self.embedding_service.embed_text(text)
+            if vector:
+                vectors.append(vector)
+        return vectors

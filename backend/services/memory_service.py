@@ -26,9 +26,9 @@ try:
 except ImportError:
     faiss = None
 
-from backend.db.neo4j_driver import Neo4jGraphManager
-from backend.services.rag_service import RAGService
-from backend.services.jina_multimodal_service import JinaMultimodalService
+from ..db.graph_manager import GraphManager
+from .rag_service import RAGService
+from .jina_multimodal_service import JinaMultimodalService
 
 logger = logging.getLogger(__name__)
 
@@ -115,18 +115,13 @@ class MemoryService:
     # Memory index file path
     DEFAULT_INDEX_PATH = "data/episode_memory.faiss"
     
-    def __init__(self, neo4j_uri: Optional[str] = None,
-                 neo4j_user: Optional[str] = None,
-                 neo4j_password: Optional[str] = None,
+    def __init__(self,
                  rag_service: Optional['RAGService'] = None,
                  embedding_dim: int = 2048):
         """
         Initialize Memory Service.
         
         Args:
-            neo4j_uri: Neo4j database URI
-            neo4j_user: Neo4j username
-            neo4j_password: Neo4j password
             rag_service: RAGService instance for embeddings
             embedding_dim: Vector embedding dimension (default 384 for Sentence Transformers)
         """
@@ -135,7 +130,7 @@ class MemoryService:
         
         load_dotenv()
         
-        self.graph_manager = Neo4jGraphManager()
+        self.graph_manager = GraphManager()
         
         self.rag_service = rag_service or RAGService()
         self.embedding_dim = embedding_dim

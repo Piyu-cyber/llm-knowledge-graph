@@ -8,7 +8,7 @@ import logging
 import math
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
-from backend.db.neo4j_driver import Neo4jGraphManager
+from backend.db.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class CognitiveEngine:
     """
     
     def __init__(self):
-        self.graph = Neo4jGraphManager()
+        self.graph = GraphManager()
         
         # IRT Model Parameters
         self.discrimination_a = 1.7  # Standard discrimination value

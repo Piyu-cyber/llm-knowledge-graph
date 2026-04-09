@@ -81,11 +81,14 @@ Set important env vars in backend/.env:
 
 ```env
 GROQ_API_KEY=your_key_here
+CEREBRAS_API_KEY=optional_second_provider_key
 JWT_SECRET_KEY=replace_with_strong_secret
 DATA_ENCRYPTION_AT_REST=true
 TLS_ENFORCED=true
 LLMROUTER_BACKOFF_SECONDS=20
 LLMROUTER_MAX_BACKOFF_SECONDS=180
+LLMROUTER_SPECULATIVE_ENABLED=true
+LLMROUTER_SPECULATIVE_MIN_PROMPT_CHARS=120
 ```
 
 ## 5. How to Run the Project

@@ -3,38 +3,33 @@ import json
 import re
 from typing import Dict
 from dotenv import load_dotenv
-from groq import Groq
+from .llm_router import LLMRouter
 
 # Load environment variables
 _backend_env = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
 load_dotenv(_backend_env)
 load_dotenv()
 
-_groq_api_key = os.getenv("GROQ_API_KEY")
-client = Groq(api_key=_groq_api_key) if _groq_api_key else None
-
 
 class LLMService:
 
-    # 🔥 Utility: Safe LLM call (IMPROVED)
-    def _call_llm(self, prompt, temperature=0, retries=2):
-        if client is None:
-            print("⚠️ GROQ_API_KEY not set. LLM features are disabled.")
-            return None
+    def __init__(self):
+        self.router = LLMRouter()
 
-        for attempt in range(retries):
-            try:
-                response = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=temperature
-                )
-                return response.choices[0].message.content.strip()
+    def _call_llm(self, prompt, temperature=0, task="ta_tutoring", max_tokens=None):
+        routed = self.router.route(
+            task=task,
+            prompt=prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            use_cache=False
+        )
+        return routed.get("text", "").strip() or None
 
-            except Exception as e:
-                print(f"❌ LLM CALL ERROR (attempt {attempt+1}):", e)
-
-        return None
+    def generate_response(self, prompt, system_prompt=None, temperature=0):
+        # We merge system_prompt into prompt since the router doesn't explicitly accept system prompts yet
+        full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+        return self._call_llm(prompt=full_prompt, temperature=temperature, task="memory_summarisation")
 
     # 🔥 Utility: Extract JSON safely
     def _extract_json(self, text):
@@ -67,7 +62,7 @@ Query: {query}
 Respond ONLY with the clarified query.
 """
 
-        content = self._call_llm(prompt, temperature=0)
+        content = self._call_llm(prompt, temperature=0, task="intent_classification")
 
         if not content:
             return query
@@ -108,7 +103,7 @@ TEXT:
 {text}
 """
 
-        content = self._call_llm(prompt, temperature=0)
+        content = self._call_llm(prompt, temperature=0, task="data_extraction")
 
         if not content:
             return {"concepts": [], "relationships": []}
@@ -169,7 +164,7 @@ TEXT:
 {text}
 """
         
-        content = self._call_llm(prompt, temperature=0)
+        content = self._call_llm(prompt, temperature=0, task="data_extraction")
         
         if not content:
             return {"nodes": [], "edges": []}
@@ -238,7 +233,7 @@ Scoring:
 - 0.0-0.3: Completely irrelevant
 """
 
-        content = self._call_llm(prompt, temperature=0)
+        content = self._call_llm(prompt, temperature=0, task="crag_grading")
 
         try:
             import json, re
@@ -284,7 +279,7 @@ Context:
 Answer:
 """
 
-        content = self._call_llm(prompt, temperature=0.2)
+        content = self._call_llm(prompt, temperature=0.2, task="ta_tutoring")
 
         if not content:
             return "Error generating answer"

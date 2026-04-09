@@ -1,22 +1,25 @@
-# OmniProf Frontend (React + Vite)
+# OmniProf Frontend (Role-First UX)
 
-This frontend is a unified API workbench for validating OmniProf end-to-end flows.
+This frontend is now product-oriented with role-first navigation:
 
-## Features
+- **Student Dashboard**
+  - Chat journey
+  - Progress visualization with low/medium/high mastery bands
+  - Assignment submissions and defence status tracking
+  - Achievements feed
+- **Professor Dashboard**
+  - HITL queue review workflow (approve / modify+approve / reject)
+  - Cohort analytics and student drill-down
+  - Graph editor controls for concept metadata updates
+  - Learning path manager (ordered concepts + partial order edges)
 
-- JWT auth session controls and quick login buttons
-- Student feature testing: chat, query, enroll, interaction, progress, achievements, submissions
-- Content/graph testing: ingest, graph snapshots, graph view, concept create/update
-- Professor feature testing: HITL queue, cohort, learning path, annotations, grading
-- Phase 6 ops testing: LLM router health/route, background jobs, compliance
-- WebSocket streaming test lab for `/ws/chat`
+JWT quick-login controls are still included to speed local testing.
 
 ## Run
 
-From repository root:
+From `frontend`:
 
 ```powershell
-Set-Location C:\Users\mitta\OneDrive\Desktop\LLM\llm-knowledge-graph\frontend
 npm install
 npm run dev
 ```
@@ -29,4 +32,4 @@ Backend should be running at:
 
 - http://127.0.0.1:8000
 
-If needed, change API base URL in the left sidebar of the app.
+If needed, change API base URL in the left sidebar.

@@ -17,10 +17,10 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 import json
 
-from backend.agents.state import AgentState
-from backend.db.graph_manager import GraphManager
-from backend.db.neo4j_schema import SemanticNode
-from backend.services.llm_service import LLMService
+from .state import AgentState
+from ..db.graph_manager import GraphManager
+from ..db.graph_schema import SemanticNode
+from ..services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -60,27 +60,25 @@ class SummarisationAgent:
     
     Runs as FastAPI BackgroundTask (non-blocking).
     Processes interactions that are 7+ days old.
-    Creates MemoryAnchor nodes in Neo4j for future retrieval context.
+    Creates MemoryAnchor nodes in local graph store for future retrieval context.
     
     Process:
     1. Query all student interactions >= 7 days old
     2. Extract concepts discussed, confidence levels, misconceptions
     3. Generate LLM-based summary of learning
-    4. Write MemoryAnchor node to Neo4j
+    4. Write MemoryAnchor node to local graph store
     5. Link to student and related concepts
     """
     
     MEMORY_AGE_DAYS = 7
     BATCH_SIZE = 20  # Process interactions in batches
     
-    def __init__(self, data_dir: Optional[str] = None,
-                 groq_api_key: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None):
         """
         Initialize Summarisation Agent.
         
         Args:
             data_dir: Path to data directory for graph persistence
-            groq_api_key: Groq API key for LLM
         """
         from dotenv import load_dotenv
         
@@ -102,7 +100,7 @@ class SummarisationAgent:
         Main background task entry point.
         
         Processes all old interactions (7+ days) for all students.
-        Creates MemoryAnchor nodes in Neo4j.
+        Creates MemoryAnchor nodes in local graph store.
         
         Returns:
             Summary dict with processing statistics
@@ -265,7 +263,7 @@ class SummarisationAgent:
                 summary_text=summary
             )
             
-            # Write to Neo4j
+            # Persist to local graph store
             memory_id = self._write_memory_anchor(memory, session_id)
             
             if memory_id:
@@ -444,7 +442,7 @@ class SummarisationAgent:
     
     def _write_memory_anchor(self, memory: MemoryAnchor, session_id: str) -> Optional[str]:
         """
-        Write MemoryAnchor node to Neo4j.
+        Write MemoryAnchor node to local graph store.
         
         Creates MemoryAnchor node linked to student and session.
         Also links to related concept nodes for context retrieval.
@@ -483,7 +481,7 @@ class SummarisationAgent:
         Extract facts from summary and create semantic memory nodes.
         
         Uses LLM to extract key facts from the session summary,
-        then creates SemanticNode entries in Neo4j linked to concepts.
+        then creates SemanticNode entries in local graph store linked to concepts.
         
         Args:
             student_id: Student ID
@@ -514,7 +512,7 @@ class SummarisationAgent:
                             source_session_id=session_id
                         )
                         
-                        # Write to Neo4j
+                        # Persist to local graph store
                         self._write_semantic_node(semantic)
                         
                     except Exception as e:
@@ -573,7 +571,7 @@ class SummarisationAgent:
     
     def _write_semantic_node(self, semantic: SemanticNode) -> bool:
         """
-        Write semantic node to Neo4j.
+        Write semantic node to local graph store.
         
         Args:
             semantic: SemanticNode instance

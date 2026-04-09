@@ -15,14 +15,14 @@ from typing import Dict, List, Optional, Any
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
 
-from backend.agents.state import AgentState, StateCheckpointStore
-from backend.agents.intent_classifier import IntentClassifier, AgentRouter
-from backend.agents.ta_agent import TAAgent, TAAgentResponse
-from backend.agents.evaluator_agent import EvaluatorAgent
-from backend.agents.integrity_agent import IntegrityAgent
-from backend.agents.cognitive_engine_agent import CognitiveEngineAgent
-from backend.agents.curriculum_agent import CurriculumAgent
-from backend.agents.gamification_agent import GamificationAgent
+from .state import AgentState, StateCheckpointStore
+from .intent_classifier import IntentClassifier, AgentRouter
+from .ta_agent import TAAgent, TAAgentResponse
+from .evaluator_agent import EvaluatorAgent
+from .integrity_agent import IntegrityAgent
+from .cognitive_engine_agent import CognitiveEngineAgent
+from .curriculum_agent import CurriculumAgent
+from .gamification_agent import GamificationAgent
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class OmniProfGraph:
         self.router = AgentRouter()
         self.checkpoint_store = StateCheckpointStore(checkpoint_path=checkpoint_path)
         
-        self.ta_agent = TAAgent(**kwargs)
+        self.ta_agent = TAAgent()
         self.evaluator_agent = EvaluatorAgent(**kwargs)
         self.integrity_agent = IntegrityAgent(**kwargs)
         self.cognitive_agent = CognitiveEngineAgent(**kwargs)
@@ -499,7 +499,12 @@ class OmniProfGraph:
                     state = restored
             
             # Run graph
-            result = self.graph.invoke(state)
+            result_raw = self.graph.invoke(state)
+            
+            if isinstance(result_raw, dict):
+                result = AgentState.from_dict(result_raw)
+            else:
+                result = result_raw
 
             # Persist checkpoint after each successful step for crash-safe resume.
             self.checkpoint_store.save(result)
@@ -539,7 +544,12 @@ class OmniProfGraph:
             logger.info(f"OmniProfGraph: Starting async execution for {state.student_id}")
             
             # Run graph asynchronously
-            result = await self.graph.ainvoke(state)
+            result_raw = await self.graph.ainvoke(state)
+            
+            if isinstance(result_raw, dict):
+                result = AgentState.from_dict(result_raw)
+            else:
+                result = result_raw
             
             logger.info(f"OmniProfGraph: Completed async execution, "
                        f"final_agent={result.active_agent}")
