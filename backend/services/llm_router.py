@@ -3,6 +3,7 @@ import time
 import logging
 import importlib
 import json
+from collections import OrderedDict
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -37,8 +38,8 @@ class LLMRouter:
     }
 
     def __init__(self, llm_service=None, **kwargs):
-        self.cloud_order = ["local", "groq", "cerebras"]
-        self.base_backoff_seconds = float(os.getenv("LLMROUTER_BACKOFF_SECONDS", "20"))
+        self.cloud_order = ["groq", "cerebras"]
+        self.base_backoff_seconds = float(os.getenv("LLMROUTER_BACKOFF_SECONDS", "10"))
         self.max_backoff_seconds = float(os.getenv("LLMROUTER_MAX_BACKOFF_SECONDS", "180"))
 
         self.force_rate_limit = {
@@ -50,10 +51,6 @@ class LLMRouter:
         local_url = os.getenv("LOCAL_INFERENCE_URL", "http://localhost:11434")
 
         self.providers: Dict[str, ProviderState] = {
-            "local": ProviderState(
-                available=True, # Attempt failover quickly 
-                configured=True,
-            ),
             "groq": ProviderState(
                 available=bool(os.getenv("GROQ_API_KEY")),
                 configured=bool(os.getenv("GROQ_API_KEY")),
@@ -65,12 +62,13 @@ class LLMRouter:
         }
 
         self.provider_callers: Dict[str, Callable[[str], str]] = {
-            "local": self._call_local,
             "groq": self._call_groq,
             "cerebras": self._call_cerebras,
         }
 
-        self.response_cache: Dict[Tuple[str, str], str] = {}
+        self.cache_max_entries = max(0, int(os.getenv("LLMROUTER_CACHE_MAX_ENTRIES", "128")))
+        self.cache_max_prompt_chars = max(0, int(os.getenv("LLMROUTER_CACHE_MAX_PROMPT_CHARS", "400")))
+        self.response_cache: OrderedDict[Tuple[str, str], str] = OrderedDict()
         self.last_route_decision: Dict = {}
         self.task_model_map: Dict[str, Dict[str, str]] = self._load_task_model_map()
         self.error_budget_target = float(os.getenv("LLMROUTER_ERROR_BUDGET_TARGET", "0.995"))
@@ -115,8 +113,9 @@ class LLMRouter:
         prompt = (prompt or "").strip()
 
         cache_key = (task, prompt)
-        if use_cache and cache_key in self.response_cache:
-            text = self.response_cache[cache_key]
+        if use_cache and self.cache_max_entries > 0 and len(prompt) <= self.cache_max_prompt_chars and cache_key in self.response_cache:
+            text = self.response_cache.pop(cache_key)
+            self.response_cache[cache_key] = text
             result = {
                 "status": "success",
                 "provider": "cache",
@@ -132,10 +131,10 @@ class LLMRouter:
             return result
 
         if task in self.PRIORITY0_TASKS:
-            provider_chain = ["local", "groq", "cerebras"]
+            provider_chain = ["groq", "cerebras"]
             priority = "priority0"
         else:
-            provider_chain = ["local", "groq", "cerebras"]
+            provider_chain = ["groq", "cerebras"]
             priority = "priority1"
 
         last_error = None
@@ -157,15 +156,16 @@ class LLMRouter:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
+                text = (text or "").strip()
                 if not text:
-                    text = "I am operating in reduced mode with concise guidance."
+                    raise RuntimeError(f"{provider} returned empty response")
                 self._mark_provider_success(provider)
                 provider_ttft_ms = (time.perf_counter() - provider_start) * 1000.0
                 self.provider_metrics[provider]["success"] += 1
                 self.provider_metrics[provider]["total_ttft_ms"] += provider_ttft_ms
                 chosen_provider = provider
-                if use_cache:
-                    self.response_cache[cache_key] = text
+                if use_cache and self.cache_max_entries > 0 and len(prompt) <= self.cache_max_prompt_chars:
+                    self._cache_put(cache_key, text)
                 break
             except Exception as exc:
                 last_error = str(exc)
@@ -174,16 +174,17 @@ class LLMRouter:
                 self._mark_provider_failure(provider, str(exc))
 
         if chosen_provider is None:
+            error_message = last_error or "no provider returned text"
             result = {
                 "status": "error",
                 "provider": None,
                 "priority": priority,
                 "reduced_mode": True,
-                "reduced_mode_notification": "Reduced mode active: Groq/Cerebras unavailable.",
-                "text": "System is temporarily degraded. Please retry shortly.",
+                "reduced_mode_notification": f"no llm available: {error_message}",
+                "text": "",
                 "cached": False,
                 "ttft_ms": (time.perf_counter() - start) * 1000.0,
-                "error": last_error,
+                "error": error_message,
             }
             self.last_route_decision = result
             self._record_route_event(
@@ -191,9 +192,9 @@ class LLMRouter:
                 provider=None,
                 status="error",
                 ttft_ms=result["ttft_ms"],
-                error=last_error,
+                error=error_message,
             )
-            return result
+            raise RuntimeError(f"no llm available: {error_message}")
 
         reduced_mode = False
         result = {
@@ -216,6 +217,13 @@ class LLMRouter:
             error=None,
         )
         return result
+
+    def _cache_put(self, cache_key: Tuple[str, str], text: str) -> None:
+        if cache_key in self.response_cache:
+            self.response_cache.pop(cache_key)
+        self.response_cache[cache_key] = text
+        while len(self.response_cache) > self.cache_max_entries:
+            self.response_cache.popitem(last=False)
 
     def _record_route_event(
         self,
@@ -312,6 +320,9 @@ class LLMRouter:
         state.last_error = error
 
         backoff = min(self.max_backoff_seconds, self.base_backoff_seconds * max(1, state.failure_count))
+        configured_active = [p for p, s in self.providers.items() if s.configured]
+        if len(configured_active) <= 1:
+            backoff = min(backoff, 3.0)
         state.backoff_until_unix = time.time() + backoff
         state.available = False
 
@@ -341,20 +352,25 @@ class LLMRouter:
             raise RuntimeError("groq not configured")
             
         from groq import Groq
-        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"), max_retries=0)
         
         model = model_override or self._resolve_model_for_task(task, "groq")
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        
-        text = response.choices[0].message.content.strip() if response.choices else None
-        if not text:
-            raise RuntimeError("groq empty response")
-        return text
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            text = response.choices[0].message.content.strip() if response.choices else None
+            if not text:
+                raise RuntimeError("groq empty response")
+            return text
+        except Exception as exc:
+            error_str = str(exc).lower()
+            if "429" in error_str or "rate" in error_str:
+                raise RuntimeError("429 rate limit from groq")
+            raise RuntimeError(f"groq error: {str(exc)}")
 
     def _call_local(
         self,

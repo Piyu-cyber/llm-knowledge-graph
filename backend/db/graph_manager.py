@@ -7,6 +7,7 @@ import json
 import os
 import math
 import uuid
+import threading
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import logging
@@ -27,8 +28,24 @@ logger = logging.getLogger(__name__)
 
 class GraphManager:
     """RustWorkX-based graph manager with JSON persistence"""
+
+    _instances: Dict[str, "GraphManager"] = {}
+    _instances_lock = threading.Lock()
+
+    def __new__(cls, data_dir: str = "data", *args, **kwargs):
+        key = os.path.abspath(data_dir or "data")
+        with cls._instances_lock:
+            instance = cls._instances.get(key)
+            if instance is None:
+                instance = super().__new__(cls)
+                cls._instances[key] = instance
+                instance._initialized = False
+            return instance
     
     def __init__(self, data_dir: str = "data"):
+        if getattr(self, "_initialized", False):
+            return
+
         self.data_dir = data_dir
         self.graph_file = os.path.join(data_dir, "knowledge_graph.json")
         self.nodes_file = os.path.join(data_dir, "nodes.json")
@@ -48,6 +65,8 @@ class GraphManager:
         
         # Load existing data
         self._load_graph()
+
+        self._initialized = True
         
         logger.info("GraphManager initialized with RustWorkX backend")
 
@@ -1226,12 +1245,24 @@ class GraphManager:
     def get_enrolled_students(self, course_id: str) -> List[str]:
         """Get all student IDs enrolled in a course"""
         students = set()
-        for node_id, node_data in self.nodes_data.items():
-            if (node_data.get('level') == 'StudentOverlay' and 
-                node_data.get('course_id') == course_id):
-                user_id = node_data.get('user_id')
-                if user_id:
-                    students.add(user_id)
+
+        for _node_id, node_data in self.nodes_data.items():
+            # RustWorkX overlays are stored with user_id/concept_id fields and node_type marker.
+            is_overlay = (
+                node_data.get("node_type") == "StudentOverlay"
+                or ("user_id" in node_data and "concept_id" in node_data)
+            )
+            if not is_overlay:
+                continue
+
+            concept_id = node_data.get("concept_id")
+            concept = self.nodes_data.get(concept_id, {}) if concept_id else {}
+            if concept.get("course_owner") != course_id:
+                continue
+
+            user_id = node_data.get("user_id")
+            if user_id:
+                students.add(user_id)
         return sorted(list(students))
     
     # ==================== Utility Methods ====================

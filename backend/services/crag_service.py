@@ -208,13 +208,38 @@ Answer YES or NO.
 
     # 🔥 AMBIGUITY DETECTION
     def _is_ambiguous(self, query):
+        query_text = (query or "").strip()
+        query_lower = query_text.lower()
+
+        # Deterministic guardrails: direct factual prompts should not enter ambiguity flow.
+        factual_starts = (
+            "what is",
+            "who is",
+            "define",
+            "explain",
+            "how does",
+            "how do",
+            "why is",
+            "compare",
+        )
+        if query_lower.startswith(factual_starts):
+            return False
+
+        # Multi-word natural-language questions are usually specific enough.
+        if len(query_text.split()) >= 3 and "?" in query_text:
+            return False
+
         prompt = f"""
 Query: {query}
 Is this query ambiguous?
 Answer YES or NO.
 """
         result = self.llm._call_llm(prompt)
-        return result and any(w in result.lower() for w in ["yes", "ambiguous"])
+        if not result:
+            return False
+
+        normalized = result.strip().lower()
+        return normalized.startswith("yes") or "ambiguous" in normalized
 
     # 🔥 OPTIONS GENERATION
     def _get_query_options(self, query):

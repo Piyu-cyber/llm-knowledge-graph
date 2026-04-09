@@ -1,9 +1,12 @@
 import os
 import json
 import re
+import logging
 from typing import Dict
 from dotenv import load_dotenv
 from .llm_router import LLMRouter
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 _backend_env = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -12,6 +15,61 @@ load_dotenv()
 
 
 class LLMService:
+
+    def _fallback_hierarchical_extraction(self, text: str) -> Dict:
+        """Best-effort local extraction when LLM JSON extraction fails."""
+        lines = [ln.strip(" -\t") for ln in (text or "").splitlines() if ln.strip()]
+        if not lines:
+            return {"nodes": [], "edges": []}
+
+        module_name = lines[0][:80]
+        nodes = [
+            {
+                "name": module_name,
+                "level": "MODULE",
+                "description": "Auto-extracted module from source document",
+            }
+        ]
+        edges = []
+
+        # Extract up to 8 candidate concept lines from the document body.
+        concept_candidates = []
+        for ln in lines[1:200]:
+            cleaned = re.sub(r"[^A-Za-z0-9()\-\s]", " ", ln)
+            cleaned = re.sub(r"\s+", " ", cleaned).strip()
+            if len(cleaned) < 5:
+                continue
+            if cleaned.lower() in {c.lower() for c in concept_candidates}:
+                continue
+            concept_candidates.append(cleaned[:80])
+            if len(concept_candidates) >= 8:
+                break
+
+        topic_name = "Core Topics"
+        nodes.append(
+            {
+                "name": topic_name,
+                "level": "TOPIC",
+                "description": "Auto-grouped topics",
+            }
+        )
+        edges.append({"source": topic_name, "target": module_name, "type": "RELATED"})
+
+        previous = None
+        for concept in concept_candidates:
+            nodes.append(
+                {
+                    "name": concept,
+                    "level": "CONCEPT",
+                    "description": "Auto-extracted concept",
+                }
+            )
+            edges.append({"source": concept, "target": topic_name, "type": "RELATED"})
+            if previous:
+                edges.append({"source": concept, "target": previous, "type": "REQUIRES"})
+            previous = concept
+
+        return {"nodes": nodes, "edges": edges}
 
     def __init__(self):
         self.router = LLMRouter()
@@ -24,7 +82,17 @@ class LLMService:
             max_tokens=max_tokens,
             use_cache=False
         )
-        return routed.get("text", "").strip() or None
+        text = (routed.get("text") or "").strip()
+        if text:
+            return text
+
+        # Keep extraction/classification tasks strict (must return machine-parsable content).
+        if task in {"data_extraction", "intent_classification", "crag_grading", "memory_summarisation"}:
+            logger.warning("LLM returned empty output for strict task=%s status=%s error=%s", task, routed.get("status"), routed.get("error"))
+            return None
+
+        logger.warning("LLM returned empty output for task=%s status=%s error=%s", task, routed.get("status"), routed.get("error"))
+        raise RuntimeError("no llm available")
 
     def generate_response(self, prompt, system_prompt=None, temperature=0):
         # We merge system_prompt into prompt since the router doesn't explicitly accept system prompts yet
@@ -103,24 +171,28 @@ TEXT:
 {text}
 """
 
-        content = self._call_llm(prompt, temperature=0, task="data_extraction")
+        try:
+            content = self._call_llm(prompt, temperature=0, task="data_extraction")
+        except Exception as exc:
+            logger.warning("Hierarchical extraction falling back to local parser: %s", str(exc))
+            return self._fallback_hierarchical_extraction(text)
 
         if not content:
             return {"concepts": [], "relationships": []}
 
-        print("\n🔍 RAW LLM RESPONSE:\n", content)
+        logger.debug("RAW LLM RESPONSE: %s", (content or "")[:500])
 
         data = self._extract_json(content)
 
         if not data:
-            print("❌ JSON parsing failed")
+            logger.warning("JSON parsing failed for concept extraction")
             return {"concepts": [], "relationships": []}
 
-        print("✅ Parsed Concepts:", len(data.get("concepts", [])))
+        logger.debug("Parsed concepts: %s", len(data.get("concepts", [])))
         return data
     
     # 🔥 1b. HIERARCHICAL CONCEPT EXTRACTION (NEW - PHASE 4)
-    def extract_concepts_hierarchical(self, text: str) -> Dict:
+    def extract_concepts_hierarchical(self, text: str, guide: str = "") -> Dict:
         """
         Extract concepts with hierarchical levels and relationships.
         
@@ -131,10 +203,20 @@ TEXT:
         Returns:
             {"nodes": [...], "edges": [...]}
         """
+        guide_block = f"""
+    COURSE SYLLABUS GUIDE:
+    {guide[:4000]}
+
+    Use the guide to align chapter/module names, topic names, and prerequisite ordering.
+    """ if guide else ""
+
         prompt = f"""
 You are an expert knowledge extraction system.
 
-From the provided text, extract a hierarchical educational structure:
+    From the provided text, extract a hierarchical educational structure.
+    {guide_block}
+
+    From the provided text, extract a hierarchical educational structure:
 - MODULES: Major subject areas
 - TOPICS: Subtopics within modules
 - CONCEPTS: Key ideas within topics
@@ -164,18 +246,24 @@ TEXT:
 {text}
 """
         
-        content = self._call_llm(prompt, temperature=0, task="data_extraction")
+        try:
+            content = self._call_llm(prompt, temperature=0, task="data_extraction")
+        except Exception as exc:
+            logger.warning("Concept extraction falling back to empty result: %s", str(exc))
+            return {"concepts": [], "relationships": []}
         
         if not content:
             return {"nodes": [], "edges": []}
         
-        print("\n🔍 RAW HIERARCHICAL RESPONSE:\n", content[:500])
+        logger.debug("RAW HIERARCHICAL RESPONSE: %s", (content or "")[:500])
         
         data = self._extract_json(content)
         
         if not data:
-            print("❌ JSON parsing failed for hierarchical extraction")
-            return {"nodes": [], "edges": []}
+            logger.warning("JSON parsing failed for hierarchical extraction")
+            fallback = self._fallback_hierarchical_extraction(text)
+            logger.info("Using fallback extraction: %s nodes", len(fallback.get("nodes", [])))
+            return fallback
         
         # Validate structure
         nodes = data.get("nodes", [])
@@ -188,8 +276,13 @@ TEXT:
         # Filter invalid edges
         valid_types = {"REQUIRES", "EXTENDS", "CONTRASTS", "RELATED"}
         edges = [e for e in edges if e.get("type", "").upper() in valid_types]
+
+        if not nodes:
+            logger.warning("Hierarchical extraction produced no valid nodes; using fallback parser")
+            fallback = self._fallback_hierarchical_extraction(text)
+            return fallback
         
-        print(f"✅ Parsed: {len(nodes)} nodes, {len(edges)} relationships")
+        logger.debug("Parsed hierarchical extraction: %s nodes, %s relationships", len(nodes), len(edges))
         return {"nodes": nodes, "edges": edges}
 
     def evaluate_relevance(self, query, context):
@@ -256,6 +349,8 @@ Scoring:
 
     # 🔥 3. ANSWER GENERATION (ANTI-HALLUCINATION)
     def generate_answer(self, query, context):
+        safe_context = context if isinstance(context, str) else str(context or "")
+
         prompt = f"""
 You are an expert AI assistant.
 
@@ -274,16 +369,20 @@ Question:
 {query}
 
 Context:
-{context[:2000]}
+{safe_context[:2000]}
 
 Answer:
 """
 
-        content = self._call_llm(prompt, temperature=0.2, task="ta_tutoring")
+        try:
+            content = self._call_llm(prompt, temperature=0.2, task="ta_tutoring")
+            if not content:
+                raise RuntimeError("no llm available")
 
-        if not content:
-            return "Error generating answer"
-
-        answer = re.sub(r"\n{2,}", "\n", content).strip()
-
-        return answer
+            answer = re.sub(r"\n{2,}", "\n", content).strip()
+            if not answer:
+                raise RuntimeError("no llm available")
+            return answer
+        except Exception as exc:
+            logger.error("Answer generation failed: %s", str(exc), exc_info=True)
+            raise

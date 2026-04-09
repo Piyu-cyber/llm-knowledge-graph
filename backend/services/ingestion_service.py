@@ -429,7 +429,7 @@ class IngestionService:
             "unit_count": len(units),
         }
 
-    def extract_graph_from_units(self, content_units: List[Dict]) -> Dict:
+    def extract_graph_from_units(self, content_units: List[Dict], course_guide: str = "") -> Dict:
         """Extract graph payload with one LLM call per content unit."""
         merged_nodes: List[Dict] = []
         merged_edges: List[Dict] = []
@@ -443,13 +443,13 @@ class IngestionService:
             if not text:
                 continue
             calls += 1
-            payload = self.llm_service.extract_concepts_hierarchical(text)
+            payload = self.llm_service.extract_concepts_hierarchical(text, guide=course_guide)
             merged_nodes.extend(payload.get("nodes", []))
             merged_edges.extend(payload.get("edges", []))
 
         return {"nodes": merged_nodes, "edges": merged_edges, "llm_calls": calls}
     
-    def ingest(self, file_path: str, course_owner: str = "system") -> Dict:
+    def ingest(self, file_path: str, course_owner: str = "system", course_guide_text: str = "", source_doc_name: str = "") -> Dict:
         """
         Ingest a document in any supported format.
         
@@ -469,6 +469,7 @@ class IngestionService:
             normalized = self.normalize_to_content_units(file_path)
             file_format = normalized["file_format"]
             units = normalized["content_units"]
+            source_doc_name = source_doc_name or os.path.basename(file_path)
             text_units = [u.get("content", "") for u in units if u.get("modality") == "text" and u.get("content")]
             text = "\n".join(text_units)
             
@@ -481,7 +482,7 @@ class IngestionService:
             
             # Step 4: Extract hierarchical concepts using one call per text content unit
             logger.info("Extracting hierarchical concepts using LLM")
-            llm_data = self.extract_graph_from_units(units)
+            llm_data = self.extract_graph_from_units(units, course_guide=course_guide_text)
             
             if not llm_data or not llm_data.get("nodes"):
                 return {
@@ -505,7 +506,7 @@ class IngestionService:
             insert_result = self.graph_service.insert_from_llm_hierarchical(
                 data=llm_data,
                 course_owner=course_owner,
-                source_doc=os.path.basename(file_path),
+                source_doc=source_doc_name,
                 file_format=file_format
             )
             
@@ -519,7 +520,7 @@ class IngestionService:
             # Step 7: Store full text in RAG
             if text:
                 try:
-                    self.rag_service.ingest_documents(text)
+                    self.rag_service.ingest_documents(text, guide_text=course_guide_text, source_name=source_doc_name)
                     logger.info("Text stored in RAG system")
                 except Exception as e:
                     logger.warning(f"⚠️ RAG ingestion failed: {str(e)}")
@@ -549,14 +550,14 @@ class IngestionService:
                 "message": str(e)
             }
 
-    def ingest_incremental(self, file_path: str, course_owner: str = "system") -> Dict:
+    def ingest_incremental(self, file_path: str, course_owner: str = "system", course_guide_text: str = "", source_doc_name: str = "") -> Dict:
         """Incrementally re-ingest one source document while preserving unrelated overlays."""
         try:
             normalized = self.normalize_to_content_units(file_path)
             file_format = normalized["file_format"]
             units = normalized["content_units"]
-            llm_data = self.extract_graph_from_units(units)
-            source_doc = os.path.basename(file_path)
+            source_doc = source_doc_name or os.path.basename(file_path)
+            llm_data = self.extract_graph_from_units(units, course_guide=course_guide_text)
 
             if self.enable_prewrite_validation:
                 prewrite_issues = self._prevalidate_extraction(llm_data, source_doc)

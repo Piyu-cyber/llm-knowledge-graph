@@ -607,8 +607,15 @@ Return ONLY the JSON, no other text.
             TAAgentResponse with structured output
         """
         try:
-            base_answer = crag_result.get("answer", "")
+            base_answer = (crag_result.get("answer") or "").strip()
             confidence = crag_result.get("confidence", 0.5)
+
+            # Recover when CRAG returns an empty or non-actionable answer.
+            if not base_answer or base_answer.lower() in {
+                "no relevant information found.",
+                "something went wrong.",
+            }:
+                base_answer = self._recover_answer_from_crag(crag_result)
             
             # Enhance answer with context window if available
             if context_window and context_window.get("episodic_memories"):
@@ -620,7 +627,7 @@ Return ONLY the JSON, no other text.
                 enhanced_answer = base_answer
             
             # Adapt explanation based on depth
-            if explanation_depth == "basic":
+            if explanation_depth == "basic" and base_answer:
                 adapted_answer = self._simplify_explanation(enhanced_answer)
             elif explanation_depth == "advanced":
                 adapted_answer = self._deepen_explanation(
@@ -628,7 +635,7 @@ Return ONLY the JSON, no other text.
                     crag_result.get("graph_results", [])
                 )
             else:
-                adapted_answer = enhanced_answer
+                adapted_answer = enhanced_answer or "I need a bit more context to answer accurately."
             
             # Apply Socratic approach if needed
             socratic_question = None
@@ -666,6 +673,28 @@ Return ONLY the JSON, no other text.
                 is_socratic=False,
                 confidence=0.0
             )
+
+    def _recover_answer_from_crag(self, crag_result: Dict) -> str:
+        """Generate a direct answer from retrieved CRAG context when primary answer is empty."""
+        try:
+            query = (crag_result.get("query") or "").strip()
+            rag_results = crag_result.get("rag_results") or []
+            graph_results = crag_result.get("graph_results") or []
+
+            graph_context = "\n".join(
+                f"{item.get('name', '')}: {item.get('description', '')}" for item in graph_results[:5]
+            )
+            rag_context = "\n".join(rag_results[:5])
+            context = f"GRAPH CONTEXT:\n{graph_context}\n\nRAG CONTEXT:\n{rag_context}".strip()
+
+            if not query or not context:
+                return "I need a bit more context to answer accurately."
+
+            recovered = self.llm_service.generate_answer(query, context)
+            return (recovered or "").strip() or "I need a bit more context to answer accurately."
+        except Exception as e:
+            logger.warning(f"CRAG recovery failed: {str(e)}")
+            return "I need a bit more context to answer accurately."
     
     
     # ==================== Explanation Adaptation ====================
@@ -677,6 +706,9 @@ Return ONLY the JSON, no other text.
         Removes technical jargon, adds analogies and examples.
         """
         try:
+            if not answer or len(answer.strip()) < 12:
+                return answer or "I need a bit more context to explain this simply."
+
             prompt = f"""
 Simplify this educational explanation for a beginner who is struggling to understand.
 - Use simple, everyday language

@@ -7,7 +7,33 @@ function qs(params = {}) {
   return text ? `?${text}` : "";
 }
 
-export async function apiRequest(apiBase, path, { method = "GET", token = "", body, formData } = {}) {
+const getCache = new Map();
+
+function cacheKey(apiBase, path, token) {
+  return `${apiBase}|${path}|${token || ""}`;
+}
+
+export async function apiRequest(
+  apiBase,
+  path,
+  {
+    method = "GET",
+    token = "",
+    body,
+    formData,
+    cacheTtlMs = 0,
+    forceRefresh = false,
+  } = {},
+) {
+  const isGet = method === "GET";
+  const key = isGet ? cacheKey(apiBase, path, token) : "";
+  if (isGet && cacheTtlMs > 0 && !forceRefresh) {
+    const existing = getCache.get(key);
+    if (existing && existing.expiresAt > Date.now()) {
+      return existing.payload;
+    }
+  }
+
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (!formData) headers["Content-Type"] = "application/json";
@@ -26,48 +52,125 @@ export async function apiRequest(apiBase, path, { method = "GET", token = "", bo
   } catch {
     // Keep plain text payloads
   }
-  return { ok: res.ok, status: res.status, elapsedMs, data };
+  const payload = { ok: res.ok, status: res.status, elapsedMs, data };
+  if (isGet && cacheTtlMs > 0 && res.ok) {
+    getCache.set(key, { expiresAt: Date.now() + cacheTtlMs, payload });
+  }
+  return payload;
 }
 
 export const AuthApi = {
   login: (apiBase, username, password) =>
-    apiRequest(apiBase, "/auth/login", { method: "POST", body: { username, password } }),
+    apiRequest(apiBase, "/auth/login", {
+      method: "POST",
+      body: { username, password },
+    }),
   me: (apiBase, token) => apiRequest(apiBase, "/auth/me", { token }),
 };
 
 export const StudentApi = {
-  chat: (apiBase, token, payload) => apiRequest(apiBase, "/chat", { method: "POST", token, body: payload }),
+  chat: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/chat", { method: "POST", token, body: payload }),
   progress: (apiBase, token, courseId) =>
-    apiRequest(apiBase, `/student/progress${qs({ course_id: courseId })}`, { token }),
-  achievements: (apiBase, token) => apiRequest(apiBase, "/student/achievements", { token }),
-  submitAssignment: (apiBase, token, file, courseId) => {
+    apiRequest(apiBase, `/student/progress${qs({ course_id: courseId })}`, {
+      token,
+      cacheTtlMs: 12000,
+    }),
+  classroomFeed: (apiBase, token, courseId) =>
+    apiRequest(
+      apiBase,
+      `/student/classroom-feed${qs({ course_id: courseId })}`,
+      { token, cacheTtlMs: 12000 },
+    ),
+  achievements: (apiBase, token) =>
+    apiRequest(apiBase, "/student/achievements", { token, cacheTtlMs: 12000 }),
+  submissions: (apiBase, token, courseId) =>
+    apiRequest(apiBase, `/student/submissions${qs({ course_id: courseId })}`, {
+      token,
+      cacheTtlMs: 12000,
+    }),
+  submitAssignment: (apiBase, token, file, courseId, assignmentId = "") => {
     const fd = new FormData();
     fd.append("file", file);
-    return apiRequest(apiBase, `/student/submit-assignment${qs({ course_id: courseId })}`, {
-      method: "POST",
-      token,
-      formData: fd,
-    });
+    return apiRequest(
+      apiBase,
+      `/student/submit-assignment${qs({ course_id: courseId, assignment_id: assignmentId })}`,
+      {
+        method: "POST",
+        token,
+        formData: fd,
+      },
+    );
   },
   submissionStatus: (apiBase, token, submissionId) =>
-    apiRequest(apiBase, `/student/submissions/${encodeURIComponent(submissionId)}`, { token }),
+    apiRequest(
+      apiBase,
+      `/student/submissions/${encodeURIComponent(submissionId)}`,
+      { token },
+    ),
 };
 
 export const ProfessorApi = {
-  hitlQueue: (apiBase, token) => apiRequest(apiBase, "/professor/hitl-queue", { token }),
+  hitlQueue: (apiBase, token) =>
+    apiRequest(apiBase, "/professor/hitl-queue", { token, cacheTtlMs: 10000 }),
   hitlAction: (apiBase, token, queueId, payload) =>
-    apiRequest(apiBase, `/professor/hitl-queue/${encodeURIComponent(queueId)}/action`, {
+    apiRequest(
+      apiBase,
+      `/professor/hitl-queue/${encodeURIComponent(queueId)}/action`,
+      {
+        method: "POST",
+        token,
+        body: payload,
+      },
+    ),
+  cohortOverview: (apiBase, token, courseId, inactivityDays = 7) =>
+    apiRequest(
+      apiBase,
+      `/professor/cohort-overview${qs({ course_id: courseId, inactivity_days: inactivityDays })}`,
+      { token, cacheTtlMs: 10000 },
+    ),
+  cohort: (apiBase, token, courseId) =>
+    apiRequest(apiBase, `/professor/cohort${qs({ course_id: courseId })}`, {
+      token,
+      cacheTtlMs: 10000,
+    }),
+  students: (apiBase, token) =>
+    apiRequest(apiBase, "/professor/students", { token, cacheTtlMs: 10000 }),
+  announcements: (apiBase, token, courseId) =>
+    apiRequest(
+      apiBase,
+      `/professor/classroom-announcements${qs({ course_id: courseId })}`,
+      { token, cacheTtlMs: 8000 },
+    ),
+  createAnnouncement: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/classroom-announcements", {
       method: "POST",
       token,
       body: payload,
     }),
-  cohortOverview: (apiBase, token, courseId, inactivityDays = 7) =>
-    apiRequest(apiBase, `/professor/cohort-overview${qs({ course_id: courseId, inactivity_days: inactivityDays })}`, { token }),
-  cohort: (apiBase, token, courseId) =>
-    apiRequest(apiBase, `/professor/cohort${qs({ course_id: courseId })}`, { token }),
-  students: (apiBase, token) => apiRequest(apiBase, "/professor/students", { token }),
+  coursework: (apiBase, token, courseId) =>
+    apiRequest(apiBase, `/professor/coursework${qs({ course_id: courseId })}`, {
+      token,
+      cacheTtlMs: 8000,
+    }),
+  createCoursework: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/coursework", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  submissions: (apiBase, token, courseId) =>
+    apiRequest(
+      apiBase,
+      `/professor/submissions${qs({ course_id: courseId })}`,
+      { token, cacheTtlMs: 8000 },
+    ),
   graphVisualization: (apiBase, token, courseId) =>
-    apiRequest(apiBase, `/professor/graph-visualization${qs({ course_id: courseId })}`, { token }),
+    apiRequest(
+      apiBase,
+      `/professor/graph-visualization${qs({ course_id: courseId })}`,
+      { token, cacheTtlMs: 10000 },
+    ),
   updateConcept: (apiBase, token, conceptId, payload) =>
     apiRequest(apiBase, `/concept/${encodeURIComponent(conceptId)}`, {
       method: "PATCH",
@@ -75,9 +178,17 @@ export const ProfessorApi = {
       body: payload,
     }),
   loadLearningPath: (apiBase, token, courseId) =>
-    apiRequest(apiBase, `/professor/learning-path${qs({ course_id: courseId })}`, { token }),
+    apiRequest(
+      apiBase,
+      `/professor/learning-path${qs({ course_id: courseId })}`,
+      { token, cacheTtlMs: 10000 },
+    ),
   saveLearningPath: (apiBase, token, payload) =>
-    apiRequest(apiBase, "/professor/learning-path", { method: "POST", token, body: payload }),
+    apiRequest(apiBase, "/professor/learning-path", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
   ingest: (apiBase, token, file, courseId) => {
     const fd = new FormData();
     fd.append("file", file);

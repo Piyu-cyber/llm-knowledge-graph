@@ -164,10 +164,20 @@ class AgentState:
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "AgentState":
         """Deserialize state from persistent checkpoint payload."""
+        raw_ts = payload.get("timestamp")
+        parsed_ts = datetime.now()
+        if isinstance(raw_ts, datetime):
+            parsed_ts = raw_ts
+        elif isinstance(raw_ts, str) and raw_ts.strip():
+            try:
+                parsed_ts = datetime.fromisoformat(raw_ts)
+            except ValueError:
+                parsed_ts = datetime.now()
+
         state = cls(
             student_id=str(payload.get("student_id", "")),
             session_id=str(payload.get("session_id", "")),
-            timestamp=datetime.fromisoformat(payload.get("timestamp")) if payload.get("timestamp") else datetime.now(),
+            timestamp=parsed_ts,
             messages=payload.get("messages", []) or [],
             current_input=str(payload.get("current_input", "")),
             current_intent=str(payload.get("current_intent", "")),
@@ -184,20 +194,26 @@ class AgentState:
         )
 
         graph_context = payload.get("graph_context", {}) or {}
-        state.graph_context = GraphContext(
-            query_text=str(graph_context.get("query_text", "")),
-            retrieved_concepts=graph_context.get("retrieved_concepts", []) or [],
-            prerequisites=graph_context.get("prerequisites", []) or [],
-            related_facts=graph_context.get("related_facts", []) or [],
-            metadata=graph_context.get("metadata", {}) or {},
-        )
+        if isinstance(graph_context, GraphContext):
+            state.graph_context = graph_context
+        else:
+            state.graph_context = GraphContext(
+                query_text=str(graph_context.get("query_text", "")),
+                retrieved_concepts=graph_context.get("retrieved_concepts", []) or [],
+                prerequisites=graph_context.get("prerequisites", []) or [],
+                related_facts=graph_context.get("related_facts", []) or [],
+                metadata=graph_context.get("metadata", {}) or {},
+            )
 
         eval_state = payload.get("eval_state", {}) or {}
-        state.eval_state = EvalState(
-            turn_count=int(eval_state.get("turn_count", 0) or 0),
-            confidence=float(eval_state.get("confidence", 0.5) or 0.5),
-            transcript=eval_state.get("transcript", []) or [],
-        )
+        if isinstance(eval_state, EvalState):
+            state.eval_state = eval_state
+        else:
+            state.eval_state = EvalState(
+                turn_count=int(eval_state.get("turn_count", 0) or 0),
+                confidence=float(eval_state.get("confidence", 0.5) or 0.5),
+                transcript=eval_state.get("transcript", []) or [],
+            )
         return state
 
 

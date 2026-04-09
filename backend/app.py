@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, BackgroundTasks, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import asyncio
 import shutil
 import os
 import tempfile
@@ -8,6 +9,9 @@ import bcrypt
 import jwt as pyjwt
 import logging
 import re
+import time
+import json
+import uuid
 from datetime import timedelta, datetime, timezone
 from typing import Optional, Dict, Tuple, Any, List
 
@@ -22,6 +26,7 @@ from .services.background_job_queue import BackgroundJobQueue
 from .services.compliance_service import ComplianceService
 from .services.integrity_policy_service import IntegrityPolicyService
 from .services.nondeterminism_service import NondeterminismService
+from .services.memory_service import MemoryService, EpisodicRecord
 from .db.graph_manager import GraphManager
 from .db.user_store import UserStore
 from .auth.jwt_handler import create_access_token, verify_token, get_user_from_token
@@ -276,6 +281,183 @@ def _iter_stream_chunks(text: str):
             yield chunk
 
 
+def _json_path(name: str) -> str:
+    return os.path.join(graph_manager.data_dir, name)
+
+
+def _read_json_rows(name: str) -> List[Dict[str, Any]]:
+    path = _json_path(name)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_json_rows(name: str, rows: List[Dict[str, Any]]) -> None:
+    path = _json_path(name)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rows, f, indent=2)
+
+
+def ensure_demo_platform_data() -> None:
+    """Seed classroom feed/coursework/submissions overlays when absent for demo UX."""
+    try:
+        users = user_store.list_users()
+        students = [u for u in users if u.get("role") == "student"]
+        professors = [u for u in users if u.get("role") == "professor"]
+
+        # Seed overlays for each known student-course pair when missing.
+        for student in students:
+            sid = str(student.get("user_id", "")).strip()
+            if not sid:
+                continue
+            for cid in (student.get("course_ids") or ["cs101"]):
+                graph_manager.initialize_student_overlays(sid, str(cid))
+
+        # Add deterministic overlay variation for visible progress if all overlays are flat.
+        all_overlays = [
+            (nid, node)
+            for nid, node in graph_manager.nodes_data.items()
+            if node.get("node_type") == "StudentOverlay"
+        ]
+        for idx, (overlay_id, node) in enumerate(all_overlays):
+            if node.get("mastery_probability") not in [None, 0.5] or node.get("visited"):
+                continue
+            mastery = [0.32, 0.48, 0.63, 0.79][idx % 4]
+            visited = idx % 2 == 0
+            graph_manager.update_student_overlay(
+                overlay_id,
+                updates={
+                    "mastery_probability": mastery,
+                    "visited": visited,
+                    "slip": max(0.05, round(0.55 - mastery, 3)),
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+
+        # Seed classroom announcements.
+        announcements = _read_json_rows("class_announcements.json")
+        if not announcements:
+            author = professors[0].get("user_id") if professors else "user_default_professor"
+            announcements = [
+                {
+                    "id": "ann_welcome",
+                    "course_id": "cs101",
+                    "title": "Welcome to OmniProf Classroom",
+                    "body": "Weekly resources and reminders will appear here.",
+                    "author_user_id": author,
+                    "audience": "all",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+                {
+                    "id": "ann_defence",
+                    "course_id": "cs101",
+                    "title": "Defence Workflow Active",
+                    "body": "Assignments move into defence mode and professor review for final approval.",
+                    "author_user_id": author,
+                    "audience": "all",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            ]
+            _write_json_rows("class_announcements.json", announcements)
+
+        # Seed coursework definitions.
+        coursework = _read_json_rows("coursework_items.json")
+        if not coursework:
+            coursework = [
+                {
+                    "id": "cw_quiz_retrieval",
+                    "course_id": "cs101",
+                    "title": "Quiz: Retrieval Basics",
+                    "description": "Short quiz on chunking, embeddings, and reranking concepts.",
+                    "due_date": "2026-04-12",
+                    "max_points": 20,
+                    "rubric": "Conceptual Accuracy",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+                {
+                    "id": "cw_crag_report",
+                    "course_id": "cs101",
+                    "title": "Assignment: CRAG Critique",
+                    "description": "Analyze confidence calibration and ambiguity behavior.",
+                    "due_date": "2026-04-15",
+                    "max_points": 30,
+                    "rubric": "Reasoning Depth",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            ]
+            _write_json_rows("coursework_items.json", coursework)
+
+        # Seed simple discussion entries.
+        discussions = _read_json_rows("class_discussions.json")
+        if not discussions:
+            discussions = [
+                {
+                    "id": "disc_confidence_vs_grade",
+                    "course_id": "cs101",
+                    "author": "student_demo",
+                    "topic": "Difference between confidence score and final grade",
+                    "replies": 4,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+                {
+                    "id": "disc_defence_prep",
+                    "course_id": "cs101",
+                    "author": "student_foundation",
+                    "topic": "How should we prepare for defence questions?",
+                    "replies": 2,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            ]
+            _write_json_rows("class_discussions.json", discussions)
+
+        # Seed one submission in defence flow to populate professor/student panels.
+        defence_rows = graph_manager._read_json_list(graph_manager._defence_records_path())
+        if not defence_rows and students:
+            student = students[0]
+            record_id = f"sub_seed_{int(time.time())}"
+            graph_manager.create_defence_record(
+                {
+                    "id": record_id,
+                    "student_id": student.get("user_id"),
+                    "course_id": "cs101",
+                    "assignment_id": "cw_crag_report",
+                    "submission_summary": "Seeded classroom submission",
+                    "status": "pending_professor_review",
+                    "transcript": [
+                        {"role": "assistant", "content": "Explain your approach to CRAG confidence handling."},
+                        {"role": "student", "content": "I analyzed retrieval confidence and ambiguity triggers."},
+                    ],
+                    "ai_recommended_grade": 84,
+                    "ai_feedback": "Good structure, needs deeper error analysis.",
+                    "integrity_score": 0.11,
+                    "sdi": 18,
+                    "sdi_visible": True,
+                }
+            )
+            graph_manager.enqueue_hitl_review(
+                {
+                    "defence_record_id": record_id,
+                    "submission_id": record_id,
+                    "student_id": student.get("user_id"),
+                    "course_id": "cs101",
+                    "ai_recommended_grade": 84,
+                    "ai_feedback": "Good structure, needs deeper error analysis.",
+                    "transcript": [
+                        {"role": "assistant", "content": "Explain your approach to CRAG confidence handling."},
+                        {"role": "student", "content": "I analyzed retrieval confidence and ambiguity triggers."},
+                    ],
+                    "integrity": {"sdi": 18},
+                }
+            )
+    except Exception as exc:
+        logger.warning("Failed to seed demo platform data: %s", str(exc))
+
+
 # 🔹 CORS (frontend access)
 app.add_middleware(
     CORSMiddleware,
@@ -302,6 +484,10 @@ background_job_queue = BackgroundJobQueue(data_dir=graph_manager.data_dir)
 compliance_service = ComplianceService(data_dir=graph_manager.data_dir)
 integrity_policy_service = IntegrityPolicyService(data_dir=graph_manager.data_dir)
 nondeterminism_service = NondeterminismService(data_dir=graph_manager.data_dir)
+memory_service = MemoryService(rag_service=rag_service)
+
+# Seed persisted classroom/platform demo data so frontend renders real backend content.
+ensure_demo_platform_data()
 
 ingestion_service = IngestionService(
     llm_service=llm_service,
@@ -317,6 +503,104 @@ crag_service = CRAGService(
 
 # 🔹 Lazy initialize OmniProf multi-agent orchestration graph
 omniprof_graph: Optional[OmniProfGraph] = None
+_background_worker_task: Optional[asyncio.Task] = None
+
+
+def _run_async_job(coro) -> None:
+    """Run async job in current loop when possible, else create a temporary loop."""
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(coro)
+
+        def _log_async_result(done: asyncio.Task) -> None:
+            try:
+                _ = done.result()
+            except Exception as exc:
+                logger.warning("Background async job failed: %s", str(exc))
+
+        task.add_done_callback(_log_async_result)
+    except RuntimeError:
+        asyncio.run(coro)
+
+
+def _handle_curriculum_job(payload: Dict[str, Any]) -> None:
+    args = payload.get("args", payload) if isinstance(payload, dict) else {}
+    _run_async_job(
+        process_curriculum_change_background(
+            course_id=str(args.get("course_id", "")),
+            change_type=str(args.get("change_type", "")),
+            node_id=str(args.get("node_id", "")),
+            node_type=str(args.get("node_type", "")),
+            metadata=args.get("metadata", {}) if isinstance(args.get("metadata", {}), dict) else {},
+        )
+    )
+
+
+def _handle_summarisation_job(_payload: Dict[str, Any]) -> None:
+    _run_async_job(process_old_interactions_background())
+
+
+def _handle_episodic_memory_job(payload: Dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        return
+    student_id = str(payload.get("student_id", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    message_text = str(payload.get("message", "")).strip()
+    if not student_id or not session_id or not message_text:
+        return
+
+    vectors = rag_service.get_embeddings([message_text])
+    if not vectors:
+        return
+
+    record = EpisodicRecord(
+        student_id=student_id,
+        session_id=session_id,
+        message=message_text,
+        embedding=vectors[0],
+        timestamp_unix=int(payload.get("timestamp_unix", int(time.time()))),
+        concept_node_ids=[str(c) for c in (payload.get("concept_node_ids", []) or []) if str(c).strip()],
+        turn_number=int(payload.get("turn_number", 0)),
+    )
+    memory_service.write_episodic_record(record)
+
+
+def _background_job_handlers() -> Dict[str, Any]:
+    return {
+        "curriculum_agent": _handle_curriculum_job,
+        "summarisation_agent": _handle_summarisation_job,
+        "episodic_memory_write": _handle_episodic_memory_job,
+        "background_task": lambda _payload: None,
+    }
+
+
+async def _background_job_worker_loop() -> None:
+    interval_s = float(os.getenv("BGJOB_WORKER_INTERVAL_SECONDS", "3"))
+    while True:
+        try:
+            background_job_queue.run_due_jobs(handlers=_background_job_handlers(), max_jobs=50)
+        except Exception as exc:
+            logger.warning("Background worker drain failed: %s", str(exc))
+        await asyncio.sleep(max(0.5, interval_s))
+
+
+@app.on_event("startup")
+async def start_background_workers() -> None:
+    global _background_worker_task
+    if _background_worker_task is None or _background_worker_task.done():
+        _background_worker_task = asyncio.create_task(_background_job_worker_loop())
+
+
+@app.on_event("shutdown")
+async def stop_background_workers() -> None:
+    global _background_worker_task
+    if _background_worker_task is not None:
+        _background_worker_task.cancel()
+        try:
+            await _background_worker_task
+        except asyncio.CancelledError:
+            pass
+        _background_worker_task = None
 
 
 def get_omniprof_graph() -> OmniProfGraph:
@@ -327,6 +611,25 @@ def get_omniprof_graph() -> OmniProfGraph:
         policy = integrity_policy_service.get_policy()
         omniprof_graph = OmniProfGraph(min_token_threshold=policy.get("min_token_threshold", 500))
     return omniprof_graph
+
+
+def _router_runtime_snapshot() -> Dict[str, Any]:
+    """Cheap provider snapshot without triggering an LLM generation call."""
+    status = llm_router.health_status()
+    providers = status.get("providers", {})
+    chosen_provider = None
+    for provider_name in status.get("cloud_order", []):
+        provider_state = providers.get(provider_name, {})
+        if provider_state.get("available"):
+            chosen_provider = provider_name
+            break
+
+    reduced_mode = chosen_provider is None
+    return {
+        "provider": chosen_provider,
+        "reduced_mode": reduced_mode,
+        "reduced_mode_notification": "Reduced mode active: no LLM providers currently available." if reduced_mode else None,
+    }
 
 
 # ==================== AUTHENTICATION ENDPOINTS ====================
@@ -867,7 +1170,7 @@ async def chat(
         if len(request.message) > 2000:
             raise HTTPException(status_code=400, detail="Message too long (max 2000 chars)")
 
-        route_result = llm_router.route("ta_tutoring", request.message)
+        route_result = _router_runtime_snapshot()
         
         # Initialize agent state
         state = AgentState(
@@ -929,6 +1232,31 @@ async def chat(
             background_job_queue.enqueue(
                 job_type=background_task_data.get("agent", "background_task"),
                 payload=background_task_data,
+            )
+
+        # Always persist episodic memory asynchronously so semantic/episodic systems stay warm.
+        retrieved_concepts = result_state.graph_context.retrieved_concepts if result_state.graph_context else []
+        concept_names = [str(c.get("name", "")).strip() for c in (retrieved_concepts or []) if isinstance(c, dict) and str(c.get("name", "")).strip()]
+        background_job_queue.enqueue(
+            job_type="episodic_memory_write",
+            payload={
+                "student_id": student_id,
+                "session_id": request.session_id,
+                "message": f"Q: {request.message}\nA: {agent_response}",
+                "concept_node_ids": concept_names,
+                "turn_number": len(result_state.messages),
+                "timestamp_unix": int(time.time()),
+            },
+        )
+
+        # Periodically schedule summarisation/semantic-memory extraction in background.
+        if len(result_state.messages) >= 6 and len(result_state.messages) % 3 == 0:
+            background_job_queue.enqueue(
+                job_type="summarisation_agent",
+                payload={
+                    "session_id": request.session_id,
+                    "student_id": student_id,
+                },
             )
         
         # Build response
@@ -1121,10 +1449,136 @@ def get_student_achievements(current_user: Dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/student/classroom-feed", tags=["Student"])
+def get_student_classroom_feed(
+    course_id: str,
+    current_user: Dict = Depends(get_current_user),
+):
+    """Return classroom stream/coursework/discussion data backed by persisted backend store."""
+    try:
+        if current_user.get("role") not in ["student", "professor", "admin"]:
+            raise HTTPException(status_code=403, detail="Student access required")
+
+        student_id = str(current_user.get("user_id", ""))
+        announcements = [
+            row for row in _read_json_rows("class_announcements.json")
+            if row.get("course_id") in [course_id, "global"]
+        ]
+        announcements.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
+
+        discussions = [
+            row for row in _read_json_rows("class_discussions.json")
+            if row.get("course_id") in [course_id, "global"]
+        ]
+        discussions.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
+
+        coursework = [
+            row for row in _read_json_rows("coursework_items.json")
+            if row.get("course_id") == course_id
+        ]
+        coursework.sort(key=lambda r: str(r.get("due_date", "")))
+
+        submission_rows = graph_manager._read_json_list(graph_manager._defence_records_path())
+        student_submissions = [
+            row for row in submission_rows
+            if row.get("course_id") == course_id and row.get("student_id") == student_id
+        ]
+
+        status_by_assignment: Dict[str, Dict[str, Any]] = {}
+        for row in student_submissions:
+            aid = str(row.get("assignment_id", "")).strip()
+            if not aid:
+                continue
+            status_by_assignment[aid] = {
+                "submission_id": row.get("id"),
+                "status": row.get("status", "pending_defence"),
+                "final_grade": row.get("final_grade"),
+                "updated_at": row.get("updated_at") or row.get("created_at"),
+            }
+
+        enriched_coursework = []
+        for item in coursework:
+            aid = str(item.get("id", "")).strip()
+            submission = status_by_assignment.get(aid)
+            enriched_coursework.append(
+                {
+                    **item,
+                    "student_status": submission.get("status") if submission else "open",
+                    "student_submission_id": submission.get("submission_id") if submission else None,
+                    "student_grade": submission.get("final_grade") if submission else None,
+                }
+            )
+
+        progress = _build_student_progress(student_id, course_id)
+        module_map: Dict[str, Dict[str, Any]] = {}
+        for row in progress.get("mastery", []):
+            module_name = row.get("module_name") or "Uncategorized"
+            mod = module_map.setdefault(
+                module_name,
+                {
+                    "module_name": module_name,
+                    "concept_count": 0,
+                    "visited_count": 0,
+                    "avg_mastery": 0.0,
+                },
+            )
+            mod["concept_count"] += 1
+            if row.get("visited"):
+                mod["visited_count"] += 1
+            mod["avg_mastery"] += float(row.get("mastery_probability", 0.0))
+
+        modules = []
+        for _, mod in module_map.items():
+            count = max(1, int(mod["concept_count"]))
+            modules.append(
+                {
+                    "module_name": mod["module_name"],
+                    "concept_count": mod["concept_count"],
+                    "visited_count": mod["visited_count"],
+                    "avg_mastery": round(float(mod["avg_mastery"]) / count, 3),
+                    "completed": mod["visited_count"] >= mod["concept_count"],
+                }
+            )
+
+        # Fallback: expose module skeleton from graph even when overlays are not yet present.
+        if not modules:
+            for node_id, node in graph_manager.nodes_data.items():
+                if node.get("level") != "MODULE":
+                    continue
+                if node.get("course_owner") != course_id:
+                    continue
+                modules.append(
+                    {
+                        "module_name": node.get("name", node_id),
+                        "concept_count": 0,
+                        "visited_count": 0,
+                        "avg_mastery": 0.0,
+                        "completed": False,
+                    }
+                )
+
+        modules.sort(key=lambda r: r["module_name"])
+
+        return {
+            "status": "success",
+            "course_id": course_id,
+            "announcements": announcements,
+            "coursework": enriched_coursework,
+            "discussions": discussions,
+            "modules": modules,
+            "submissions": student_submissions,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/student/submit-assignment", tags=["Student"])
 async def submit_assignment(
     file: UploadFile = File(...),
     course_id: Optional[str] = None,
+    assignment_id: Optional[str] = None,
     current_user: Dict = Depends(get_current_user),
 ):
     """Create submission record and start evaluation mode for defence chat."""
@@ -1139,6 +1593,7 @@ async def submit_assignment(
                 "id": submission_id,
                 "student_id": current_user.get("user_id"),
                 "course_id": course_id,
+                "assignment_id": assignment_id,
                 "submission_summary": summary,
                 "status": "pending_defence",
                 "transcript": [],
@@ -1189,6 +1644,7 @@ def get_submission_status(
         return {
             "status": "success",
             "submission_id": submission_id,
+            "assignment_id": record.get("assignment_id"),
             "workflow_status": status_text,
             "pending_professor_approval": status_text in ["pending_professor_review", "pending_defence"],
             "final_grade": record.get("final_grade"),
@@ -1205,6 +1661,43 @@ def get_submission_status(
                 ),
             },
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/student/submissions", tags=["Student"])
+def list_student_submissions(
+    course_id: Optional[str] = None,
+    current_user: Dict = Depends(get_current_user),
+):
+    """List student submissions for classroom coursework cards/history."""
+    try:
+        if current_user.get("role") not in ["student", "admin", "professor"]:
+            raise HTTPException(status_code=403, detail="Student access required")
+
+        student_id = current_user.get("user_id")
+        rows = graph_manager._read_json_list(graph_manager._defence_records_path())
+        items = []
+        for row in rows:
+            if row.get("student_id") != student_id:
+                continue
+            if course_id and row.get("course_id") != course_id:
+                continue
+            items.append(
+                {
+                    "submission_id": row.get("id"),
+                    "assignment_id": row.get("assignment_id"),
+                    "course_id": row.get("course_id"),
+                    "status": row.get("status"),
+                    "final_grade": row.get("final_grade"),
+                    "created_at": row.get("created_at"),
+                    "updated_at": row.get("updated_at"),
+                }
+            )
+        items.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
+        return {"status": "success", "items": items}
     except HTTPException:
         raise
     except Exception as e:
@@ -1482,7 +1975,7 @@ def get_professor_cohort(
         for node_id, node in graph_manager.nodes_data.items():
             if node.get("node_type") != "StudentOverlay":
                 continue
-            student_id = node.get("student_id")
+            student_id = node.get("user_id")
             concept_id = node.get("concept_id")
             if not student_id or not concept_id:
                 continue
@@ -1553,14 +2046,43 @@ def get_professor_students(
     try:
         # Collect unique student IDs from StudentOverlay nodes
         students_set = set()
-        for node_id, node in graph_manager.nodes_data.items():
+        for _, node in graph_manager.nodes_data.items():
             if node.get("node_type") == "StudentOverlay":
-                student_id = node.get("student_id")
+                student_id = node.get("user_id")
                 if student_id:
                     students_set.add(student_id)
-        
-        # Convert to list and sort
-        students = sorted(list(students_set))
+
+        users_by_id = {
+            str(u.get("user_id", "")): u
+            for u in user_store.list_users()
+            if str(u.get("user_id", "")).strip()
+        }
+        # Fallback: include enrolled students from user store even if overlays are not present yet.
+        if not students_set:
+            professor_courses = set(current_user.get("course_ids", []))
+            for user in user_store.list_users():
+                if user.get("role") != "student":
+                    continue
+                user_courses = set(user.get("course_ids", []))
+                if current_user.get("role") != "admin" and not (professor_courses & user_courses):
+                    continue
+                sid = str(user.get("user_id", "")).strip()
+                if sid:
+                    students_set.add(sid)
+
+        students = []
+        for sid in sorted(students_set):
+            profile = users_by_id.get(str(sid), {})
+            students.append(
+                {
+                    "id": sid,
+                    "user_id": sid,
+                    "username": profile.get("username"),
+                    "name": profile.get("full_name") or profile.get("username") or sid,
+                    "email": profile.get("email"),
+                    "course_ids": profile.get("course_ids", []),
+                }
+            )
         
         compliance_service.log_access(
             actor_user_id=current_user.get("user_id", ""),
@@ -1571,6 +2093,157 @@ def get_professor_students(
         
         return {"status": "success", "students": students}
     
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/classroom-announcements", tags=["Professor"])
+def get_professor_announcements(
+    course_id: str,
+    current_user: Dict = Depends(get_professor_user),
+):
+    """List course announcements from persisted classroom feed."""
+    try:
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+        rows = [r for r in _read_json_rows("class_announcements.json") if r.get("course_id") in [course_id, "global"]]
+        rows.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
+        return {"status": "success", "items": rows}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/classroom-announcements", tags=["Professor"])
+def create_professor_announcement(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Create one announcement row for classroom feed."""
+    try:
+        course_id = str(payload.get("course_id", "")).strip()
+        title = str(payload.get("title", "")).strip()
+        body = str(payload.get("body", "")).strip()
+        if not course_id or not title:
+            raise HTTPException(status_code=400, detail="course_id and title are required")
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        rows = _read_json_rows("class_announcements.json")
+        item = {
+            "id": f"ann_{uuid.uuid4().hex[:10]}",
+            "course_id": course_id,
+            "title": title,
+            "body": body,
+            "author_user_id": current_user.get("user_id"),
+            "audience": str(payload.get("audience", "all")),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        rows.insert(0, item)
+        _write_json_rows("class_announcements.json", rows)
+        return {"status": "success", "item": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/coursework", tags=["Professor"])
+def get_professor_coursework(
+    course_id: str,
+    current_user: Dict = Depends(get_professor_user),
+):
+    """List coursework items with submission counts from defence records."""
+    try:
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        rows = [r for r in _read_json_rows("coursework_items.json") if r.get("course_id") == course_id]
+        defence_rows = graph_manager._read_json_list(graph_manager._defence_records_path())
+        counts: Dict[str, int] = {}
+        for row in defence_rows:
+            if row.get("course_id") != course_id:
+                continue
+            aid = str(row.get("assignment_id", "")).strip()
+            if not aid:
+                continue
+            counts[aid] = counts.get(aid, 0) + 1
+        for row in rows:
+            row["submission_count"] = counts.get(str(row.get("id", "")), 0)
+        rows.sort(key=lambda r: str(r.get("due_date", "")))
+        return {"status": "success", "items": rows}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/coursework", tags=["Professor"])
+def create_professor_coursework(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Create one coursework row for classroom feed."""
+    try:
+        course_id = str(payload.get("course_id", "")).strip()
+        title = str(payload.get("title", "")).strip()
+        due_date = str(payload.get("due_date", "")).strip()
+        if not course_id or not title or not due_date:
+            raise HTTPException(status_code=400, detail="course_id, title, and due_date are required")
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        rows = _read_json_rows("coursework_items.json")
+        item = {
+            "id": f"cw_{uuid.uuid4().hex[:10]}",
+            "course_id": course_id,
+            "title": title,
+            "description": str(payload.get("description", "")).strip(),
+            "due_date": due_date,
+            "max_points": int(payload.get("max_points", 20) or 20),
+            "rubric": str(payload.get("rubric", "Conceptual Accuracy")),
+            "created_by": current_user.get("user_id"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        rows.insert(0, item)
+        _write_json_rows("coursework_items.json", rows)
+        return {"status": "success", "item": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/submissions", tags=["Professor"])
+def get_professor_submissions(
+    course_id: str,
+    current_user: Dict = Depends(get_professor_user),
+):
+    """List course submissions for command-center assignment analytics."""
+    try:
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+        rows = graph_manager._read_json_list(graph_manager._defence_records_path())
+        items = []
+        for row in rows:
+            if row.get("course_id") != course_id:
+                continue
+            items.append(
+                {
+                    "submission_id": row.get("id"),
+                    "student_id": row.get("student_id"),
+                    "assignment_id": row.get("assignment_id"),
+                    "status": row.get("status"),
+                    "final_grade": row.get("final_grade"),
+                    "created_at": row.get("created_at"),
+                    "updated_at": row.get("updated_at"),
+                }
+            )
+        items.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
+        return {"status": "success", "items": items}
     except HTTPException:
         raise
     except Exception as e:
@@ -1806,12 +2479,7 @@ def drain_background_jobs(
     current_user: Dict = Depends(get_admin_user),
 ):
     """Process due background jobs and move repeated failures to dead-letter."""
-    handlers = {
-        "curriculum_agent": lambda _payload: None,
-        "summarisation_agent": lambda _payload: None,
-        "background_task": lambda _payload: None,
-    }
-    return background_job_queue.run_due_jobs(handlers=handlers, max_jobs=max_jobs)
+    return background_job_queue.run_due_jobs(handlers=_background_job_handlers(), max_jobs=max_jobs)
 
 
 @app.post("/background-jobs/replay-dead-letter", tags=["Phase6"])

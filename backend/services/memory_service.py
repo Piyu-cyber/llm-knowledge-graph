@@ -591,7 +591,17 @@ class MemoryService:
                 current_concept_ids=current_concept_ids,
                 top_k=3
             )
-            context_window["episodic_memories"] = [m.to_dict() for m in episodic]
+            normalized_episodic: List[Dict[str, Any]] = []
+            for m in episodic:
+                if isinstance(m, dict):
+                    normalized_episodic.append(m)
+                elif hasattr(m, "to_dict"):
+                    normalized_episodic.append(m.to_dict())
+                else:
+                    # Defensive fallback for unexpected row types.
+                    normalized_episodic.append({"raw": str(m)})
+
+            context_window["episodic_memories"] = normalized_episodic
             context_window["episodic_count"] = len(episodic)
             
             # 3. Memory anchors

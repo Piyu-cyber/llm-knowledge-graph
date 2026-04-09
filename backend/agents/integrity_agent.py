@@ -189,8 +189,10 @@ class IntegrityAgent:
                     prior_token_count=prior_token_count,
                 )
                 
-                logger.info(f"DefenceRecord {defence_record_id} updated with "
-                           f"integrity_score={integrity_score:.2f}")
+                score_text = f"{integrity_score:.2f}" if integrity_score is not None else "suppressed"
+                logger.info(
+                    f"DefenceRecord {defence_record_id} updated with integrity_score={score_text}"
+                )
 
                 # Write completed defence package into HITL queue.
                 record = self.graph_manager.get_defence_record(defence_record_id) if hasattr(self.graph_manager, "get_defence_record") else None
@@ -542,8 +544,10 @@ class IntegrityAgent:
                     "integrity_min_token_threshold": int(self.min_token_threshold),
                 },
             )
-            logger.info(f"DefenceRecord {record_id} updated: status={status}, "
-                       f"integrity_score={integrity_score:.2f}")
+            score_text = f"{integrity_score:.2f}" if integrity_score is not None else "suppressed"
+            logger.info(
+                f"DefenceRecord {record_id} updated: status={status}, integrity_score={score_text}"
+            )
             return result.get("status") == "success"
         except Exception as e:
             logger.error(f"DefenceRecord update error: {str(e)}")
