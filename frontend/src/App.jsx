@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AuthApi } from "./endpoints";
+import { AuthApi, ProfessorApi, StudentApi } from "./endpoints";
 import StudentDashboard from "./StudentDashboard";
 import ProfessorDashboard from "./ProfessorDashboard";
 
@@ -37,6 +37,36 @@ export default function App() {
 
   // Professor State
   const [profCourse, setProfCourse] = useState("cs101");
+  const [workbenchBusy, setWorkbenchBusy] = useState(false);
+  const [workbenchResult, setWorkbenchResult] = useState(null);
+  const [registerDraft, setRegisterDraft] = useState({
+    username: "",
+    email: "",
+    password: "",
+    full_name: "",
+    role: "student",
+    switchToken: true,
+  });
+  const [enrolCourseDraft, setEnrolCourseDraft] = useState("cs101");
+  const [interactionDraft, setInteractionDraft] = useState({
+    concept_id: "",
+    answered_correctly: true,
+    difficulty: "0",
+  });
+  const [queryDraft, setQueryDraft] = useState({
+    query: "",
+    course_id: "cs101",
+  });
+  const [graphViewQuery, setGraphViewQuery] = useState("");
+  const [phase6Draft, setPhase6Draft] = useState({
+    maxJobs: "25",
+    traceLimit: "20",
+    historyLimit: "30",
+    diagnosticsRuns: "3",
+    diagnosticsPrompt: "Explain gradient descent simply.",
+    routerPrompt: "Summarize Bayesian inference in 2 lines.",
+    routerRouteHint: "auto",
+  });
 
   const tokenPayload = useMemo(() => (token ? parseJwt(token) : null), [token]);
   const role = roleFromJwt(tokenPayload);
@@ -109,6 +139,28 @@ export default function App() {
     }
     setAuthError("");
     setAuthView("login");
+  };
+
+  const runWorkbenchAction = async ({ endpoint, method, call, onSuccess }) => {
+    setWorkbenchBusy(true);
+    setWorkbenchResult(null);
+    try {
+      const res = await call();
+      pushActivity({ endpoint, status: res.status, ok: res.ok, method });
+      setWorkbenchResult({ endpoint, method, status: res.status, ok: res.ok, data: res.data });
+      if (res.ok && onSuccess) onSuccess(res);
+    } catch (err) {
+      setWorkbenchResult({
+        endpoint,
+        method,
+        status: 0,
+        ok: false,
+        data: { detail: String(err?.message || err || "Network error") },
+      });
+      pushActivity({ endpoint, status: 0, ok: false, method });
+    } finally {
+      setWorkbenchBusy(false);
+    }
   };
 
   const isAuthenticated = Boolean(token);
@@ -235,6 +287,133 @@ export default function App() {
                   <div style={{flex: 1}}>
                     <label style={{fontSize: '0.85rem', display:'block', marginBottom:'0.5rem'}}>Session ID</label>
                     <input value={chatSession} onChange={(e) => setChatSession(e.target.value)} />
+                  </div>
+                )}
+              </div>
+
+              <h4>Backend Workbench (Remaining API Flows)</h4>
+              <div style={{display: "grid", gap: "0.9rem"}}>
+                <div style={{padding: "0.65rem", border: "1px solid var(--border-light)", borderRadius: "8px"}}>
+                  <strong style={{fontSize: "0.82rem"}}>Auth Register</strong>
+                  <div style={{display: "grid", gap: "0.45rem", gridTemplateColumns: "repeat(2, minmax(120px, 1fr))", marginTop: "0.45rem"}}>
+                    <input placeholder="username" value={registerDraft.username} onChange={(e) => setRegisterDraft((p) => ({ ...p, username: e.target.value }))} />
+                    <input placeholder="email" value={registerDraft.email} onChange={(e) => setRegisterDraft((p) => ({ ...p, email: e.target.value }))} />
+                    <input placeholder="password" type="password" value={registerDraft.password} onChange={(e) => setRegisterDraft((p) => ({ ...p, password: e.target.value }))} />
+                    <input placeholder="full name" value={registerDraft.full_name} onChange={(e) => setRegisterDraft((p) => ({ ...p, full_name: e.target.value }))} />
+                    <select value={registerDraft.role} onChange={(e) => setRegisterDraft((p) => ({ ...p, role: e.target.value }))}>
+                      <option value="student">student</option>
+                      <option value="professor">professor</option>
+                      <option value="admin">admin</option>
+                    </select>
+                    <label style={{display: "flex", alignItems: "center", gap: "0.45rem", fontSize: "0.78rem"}}>
+                      <input type="checkbox" checked={registerDraft.switchToken} onChange={(e) => setRegisterDraft((p) => ({ ...p, switchToken: e.target.checked }))} />
+                      Switch to new token
+                    </label>
+                  </div>
+                  <button
+                    className="btn-solid"
+                    style={{width: "auto", marginTop: "0.45rem", padding: "0.32rem 0.7rem"}}
+                    disabled={workbenchBusy}
+                    onClick={() => runWorkbenchAction({
+                      endpoint: "/auth/register",
+                      method: "POST",
+                      call: () => AuthApi.register(apiBase, {
+                        username: registerDraft.username.trim(),
+                        email: registerDraft.email.trim(),
+                        password: registerDraft.password,
+                        full_name: registerDraft.full_name.trim() || undefined,
+                        role: registerDraft.role,
+                      }),
+                      onSuccess: (res) => {
+                        if (registerDraft.switchToken && res.data?.access_token) {
+                          applySuccessfulLogin(res.data.access_token);
+                        }
+                      },
+                    })}
+                  >
+                    Register User
+                  </button>
+                </div>
+
+                <div style={{padding: "0.65rem", border: "1px solid var(--border-light)", borderRadius: "8px"}}>
+                  <strong style={{fontSize: "0.82rem"}}>Enrollment / Interaction / Query</strong>
+                  <div style={{display: "grid", gap: "0.45rem", gridTemplateColumns: "repeat(3, minmax(120px, 1fr))", marginTop: "0.45rem"}}>
+                    <input placeholder="course_id" value={enrolCourseDraft} onChange={(e) => setEnrolCourseDraft(e.target.value)} />
+                    <button className="btn-solid" style={{width: "auto", padding: "0.32rem 0.7rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/enrol", method: "POST", call: () => StudentApi.enrol(apiBase, token, enrolCourseDraft.trim()) })}>Enrol</button>
+                    <span style={{fontSize: "0.74rem", color: "var(--text-secondary)", alignSelf: "center"}}>Requires active JWT</span>
+                  </div>
+
+                  <div style={{display: "grid", gap: "0.45rem", gridTemplateColumns: "2fr 1fr 1fr auto", marginTop: "0.45rem"}}>
+                    <input placeholder="concept_id" value={interactionDraft.concept_id} onChange={(e) => setInteractionDraft((p) => ({ ...p, concept_id: e.target.value }))} />
+                    <select value={interactionDraft.answered_correctly ? "true" : "false"} onChange={(e) => setInteractionDraft((p) => ({ ...p, answered_correctly: e.target.value === "true" }))}>
+                      <option value="true">correct</option>
+                      <option value="false">incorrect</option>
+                    </select>
+                    <input type="number" step="0.1" min="-4" max="4" placeholder="difficulty" value={interactionDraft.difficulty} onChange={(e) => setInteractionDraft((p) => ({ ...p, difficulty: e.target.value }))} />
+                    <button className="btn-solid" style={{width: "auto", padding: "0.32rem 0.7rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/interaction", method: "POST", call: () => StudentApi.recordInteraction(apiBase, token, { concept_id: interactionDraft.concept_id.trim(), answered_correctly: interactionDraft.answered_correctly, difficulty: Number(interactionDraft.difficulty || 0) }) })}>Record Interaction</button>
+                  </div>
+
+                  <div style={{display: "grid", gap: "0.45rem", gridTemplateColumns: "3fr 1fr auto", marginTop: "0.45rem"}}>
+                    <input placeholder="query" value={queryDraft.query} onChange={(e) => setQueryDraft((p) => ({ ...p, query: e.target.value }))} />
+                    <input placeholder="course_id" value={queryDraft.course_id} onChange={(e) => setQueryDraft((p) => ({ ...p, course_id: e.target.value }))} />
+                    <button className="btn-solid" style={{width: "auto", padding: "0.32rem 0.7rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/query", method: "POST", call: () => StudentApi.query(apiBase, token, { query: queryDraft.query, course_id: queryDraft.course_id || undefined, use_graph: true, use_vector: true, confidence_threshold: 0.5 }) })}>Run Query</button>
+                  </div>
+                </div>
+
+                <div style={{padding: "0.65rem", border: "1px solid var(--border-light)", borderRadius: "8px"}}>
+                  <strong style={{fontSize: "0.82rem"}}>Graph / Graph-View</strong>
+                  <div style={{display: "grid", gap: "0.45rem", gridTemplateColumns: "3fr auto auto", marginTop: "0.45rem"}}>
+                    <input placeholder="graph-view query" value={graphViewQuery} onChange={(e) => setGraphViewQuery(e.target.value)} />
+                    <button className="btn-solid" style={{width: "auto", padding: "0.32rem 0.7rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/graph", method: "GET", call: () => StudentApi.graph(apiBase, token, { forceRefresh: true }) })}>Get /graph</button>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.32rem 0.7rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/graph-view", method: "GET", call: () => StudentApi.graphView(apiBase, token, graphViewQuery.trim(), { forceRefresh: true }) })}>Get /graph-view</button>
+                  </div>
+                </div>
+
+                <div style={{padding: "0.65rem", border: "1px solid var(--border-light)", borderRadius: "8px"}}>
+                  <strong style={{fontSize: "0.82rem"}}>Phase 6 Operations</strong>
+                  <div style={{display: "flex", gap: "0.45rem", flexWrap: "wrap", marginTop: "0.45rem"}}>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/llm-router/health", method: "GET", call: () => ProfessorApi.phase6Health(apiBase, token, { forceRefresh: true }) })}>Router Health</button>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/integrity/policy", method: "GET", call: () => ProfessorApi.phase6Policy(apiBase, token, { forceRefresh: true }) })}>Integrity Policy</button>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/background-jobs/stats", method: "GET", call: () => ProfessorApi.phase6JobStats(apiBase, token, { forceRefresh: true }) })}>Job Stats</button>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/compliance/status", method: "GET", call: () => ProfessorApi.phase6ComplianceStatus(apiBase, token, { forceRefresh: true }) })}>Compliance</button>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/observability/metrics", method: "GET", call: () => ProfessorApi.phase6ObservabilityMetrics(apiBase, token, { forceRefresh: true }) })}>Metrics</button>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/observability/error-budget", method: "GET", call: () => ProfessorApi.phase6ErrorBudget(apiBase, token, { forceRefresh: true }) })}>Error Budget</button>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/observability/providers", method: "GET", call: () => ProfessorApi.phase6Providers(apiBase, token, { forceRefresh: true }) })}>Providers</button>
+                  </div>
+
+                  <div style={{display: "grid", gap: "0.45rem", gridTemplateColumns: "1fr auto auto", marginTop: "0.55rem"}}>
+                    <input type="number" min="1" max="200" value={phase6Draft.traceLimit} onChange={(e) => setPhase6Draft((p) => ({ ...p, traceLimit: e.target.value }))} placeholder="trace limit" />
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/observability/traces", method: "GET", call: () => ProfessorApi.phase6ObservabilityTraces(apiBase, token, Number(phase6Draft.traceLimit || 20)) })}>Traces</button>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/background-jobs/history", method: "GET", call: () => ProfessorApi.phase6History(apiBase, token, Number(phase6Draft.historyLimit || 30)) })}>Job History</button>
+                  </div>
+
+                  <div style={{display: "grid", gap: "0.45rem", gridTemplateColumns: "1fr auto auto", marginTop: "0.55rem"}}>
+                    <input type="number" min="1" max="200" value={phase6Draft.maxJobs} onChange={(e) => setPhase6Draft((p) => ({ ...p, maxJobs: e.target.value }))} placeholder="max jobs" />
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/background-jobs/drain", method: "POST", call: () => ProfessorApi.phase6DrainJobs(apiBase, token, Number(phase6Draft.maxJobs || 25)) })}>Drain Jobs</button>
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/background-jobs/replay-dead-letter", method: "POST", call: () => ProfessorApi.phase6ReplayDeadLetter(apiBase, token, Number(phase6Draft.maxJobs || 25)) })}>Replay Dead Letter</button>
+                  </div>
+
+                  <div style={{display: "grid", gap: "0.45rem", gridTemplateColumns: "2fr 1fr auto", marginTop: "0.55rem"}}>
+                    <input value={phase6Draft.diagnosticsPrompt} onChange={(e) => setPhase6Draft((p) => ({ ...p, diagnosticsPrompt: e.target.value }))} placeholder="diagnostics prompt" />
+                    <input type="number" min="1" max="12" value={phase6Draft.diagnosticsRuns} onChange={(e) => setPhase6Draft((p) => ({ ...p, diagnosticsRuns: e.target.value }))} placeholder="runs" />
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/diagnostics/nondeterminism/run", method: "POST", call: () => ProfessorApi.phase6DiagnosticsRun(apiBase, token, { prompt: phase6Draft.diagnosticsPrompt, runs: Number(phase6Draft.diagnosticsRuns || 3) }) })}>Run Diagnostics</button>
+                  </div>
+
+                  <div style={{display: "grid", gap: "0.45rem", gridTemplateColumns: "2fr 1fr auto", marginTop: "0.55rem"}}>
+                    <input value={phase6Draft.routerPrompt} onChange={(e) => setPhase6Draft((p) => ({ ...p, routerPrompt: e.target.value }))} placeholder="router prompt" />
+                    <input value={phase6Draft.routerRouteHint} onChange={(e) => setPhase6Draft((p) => ({ ...p, routerRouteHint: e.target.value }))} placeholder="route hint" />
+                    <button className="btn-solid" style={{width: "auto", padding: "0.28rem 0.62rem"}} disabled={workbenchBusy || !token} onClick={() => runWorkbenchAction({ endpoint: "/llm-router/route", method: "POST", call: () => ProfessorApi.phase6RouteProbe(apiBase, token, { prompt: phase6Draft.routerPrompt, route_hint: phase6Draft.routerRouteHint }) })}>Route Probe</button>
+                  </div>
+                </div>
+
+                {workbenchResult && (
+                  <div style={{padding: "0.65rem", border: "1px solid var(--border-light)", borderRadius: "8px", background: "var(--bg-secondary)"}}>
+                    <div style={{fontSize: "0.78rem", color: "var(--text-secondary)", marginBottom: "0.35rem"}}>
+                      {workbenchResult.method} {workbenchResult.endpoint} | status {workbenchResult.status} | {workbenchResult.ok ? "ok" : "error"}
+                    </div>
+                    <pre style={{margin: 0, fontSize: "0.72rem", maxHeight: "240px", overflow: "auto"}}>
+                      {JSON.stringify(workbenchResult.data, null, 2)}
+                    </pre>
                   </div>
                 )}
               </div>

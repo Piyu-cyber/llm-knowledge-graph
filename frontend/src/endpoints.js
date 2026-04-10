@@ -60,6 +60,11 @@ export async function apiRequest(
 }
 
 export const AuthApi = {
+  register: (apiBase, payload) =>
+    apiRequest(apiBase, "/auth/register", {
+      method: "POST",
+      body: payload,
+    }),
   login: (apiBase, username, password) =>
     apiRequest(apiBase, "/auth/login", {
       method: "POST",
@@ -114,6 +119,36 @@ export const StudentApi = {
       `/student/submissions/${encodeURIComponent(submissionId)}`,
       { token },
     ),
+  enrol: (apiBase, token, courseId) =>
+    apiRequest(apiBase, "/enrol", {
+      method: "POST",
+      token,
+      body: { course_id: courseId },
+    }),
+  recordInteraction: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/interaction", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  query: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/query", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  graphView: (apiBase, token, query, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, `/graph-view${qs({ query })}`, {
+      token,
+      cacheTtlMs: 5000,
+      forceRefresh,
+    }),
+  graph: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/graph", {
+      token,
+      cacheTtlMs: 8000,
+      forceRefresh,
+    }),
 };
 
 export const ProfessorApi = {
@@ -181,6 +216,12 @@ export const ProfessorApi = {
       token,
       body: payload,
     }),
+  gradeSubmission: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/grade", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
   submissions: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(
       apiBase,
@@ -228,6 +269,42 @@ export const ProfessorApi = {
       token,
       body: payload,
     }),
+  createConcept: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/concept", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  createModule: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/module", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  createTopic: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/topic", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  createFact: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/fact", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  createGraphEdge: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/graph-edge", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  deleteGraphEdge: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/graph-edge/delete", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
   ingest: (apiBase, token, file, courseId) => {
     const fd = new FormData();
     fd.append("file", file);
@@ -237,4 +314,84 @@ export const ProfessorApi = {
       formData: fd,
     });
   },
+  phase6Health: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/llm-router/health", {
+      token,
+      cacheTtlMs: 5000,
+      forceRefresh,
+    }),
+  phase6ComplianceStatus: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/compliance/status", {
+      token,
+      cacheTtlMs: 5000,
+      forceRefresh,
+    }),
+  phase6JobStats: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/background-jobs/stats", {
+      token,
+      cacheTtlMs: 5000,
+      forceRefresh,
+    }),
+  phase6ObservabilityMetrics: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/observability/metrics", {
+      token,
+      cacheTtlMs: 5000,
+      forceRefresh,
+    }),
+  phase6ObservabilityTraces: (apiBase, token, limit = 20) =>
+    apiRequest(apiBase, `/observability/traces${qs({ limit })}`, {
+      token,
+    }),
+  phase6ErrorBudget: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/observability/error-budget", {
+      token,
+      cacheTtlMs: 5000,
+      forceRefresh,
+    }),
+  phase6Providers: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/observability/providers", {
+      token,
+      cacheTtlMs: 5000,
+      forceRefresh,
+    }),
+  phase6Policy: (apiBase, token, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, "/integrity/policy", {
+      token,
+      cacheTtlMs: 5000,
+      forceRefresh,
+    }),
+  phase6UpdatePolicy: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/integrity/policy", {
+      method: "PATCH",
+      token,
+      body: payload,
+    }),
+  phase6DrainJobs: (apiBase, token, maxJobs = 50) =>
+    apiRequest(apiBase, "/background-jobs/drain", {
+      method: "POST",
+      token,
+      body: { max_jobs: maxJobs },
+    }),
+  phase6ReplayDeadLetter: (apiBase, token, maxJobs = 50) =>
+    apiRequest(apiBase, "/background-jobs/replay-dead-letter", {
+      method: "POST",
+      token,
+      body: { max_jobs: maxJobs },
+    }),
+  phase6History: (apiBase, token, limit = 50) =>
+    apiRequest(apiBase, `/background-jobs/history${qs({ limit })}`, {
+      token,
+    }),
+  phase6DiagnosticsRun: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/diagnostics/nondeterminism/run", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  phase6RouteProbe: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/llm-router/route", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
 };

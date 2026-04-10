@@ -835,6 +835,117 @@ def add_concept(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/professor/module", tags=["Professor"])
+def create_professor_module(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Create a module for a specific course."""
+    try:
+        course_id = str(payload.get("course_id", "")).strip()
+        name = str(payload.get("name", "")).strip()
+        description = str(payload.get("description", "")).strip()
+        visibility = str(payload.get("visibility", "global")).strip() or "global"
+
+        if not course_id or not name:
+            raise HTTPException(status_code=400, detail="course_id and name are required")
+
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        result = graph_service.create_module(
+            name=name,
+            course_owner=course_id,
+            description=description,
+            visibility=visibility,
+        )
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("message", "Failed to create module"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/topic", tags=["Professor"])
+def create_professor_topic(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Create a topic under an existing module."""
+    try:
+        module_id = str(payload.get("module_id", "")).strip()
+        name = str(payload.get("name", "")).strip()
+        description = str(payload.get("description", "")).strip()
+        visibility = str(payload.get("visibility", "global")).strip() or "global"
+
+        if not module_id or not name:
+            raise HTTPException(status_code=400, detail="module_id and name are required")
+
+        module_node = graph_manager.nodes_data.get(module_id)
+        if not module_node or module_node.get("level") != "MODULE":
+            raise HTTPException(status_code=404, detail="Module not found")
+
+        course_id = str(module_node.get("course_owner", "")).strip()
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        result = graph_service.create_topic(
+            module_id=module_id,
+            name=name,
+            course_owner=course_id,
+            description=description,
+            visibility=visibility,
+        )
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("message", "Failed to create topic"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/fact", tags=["Professor"])
+def create_professor_fact(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Create a fact under an existing concept."""
+    try:
+        concept_id = str(payload.get("concept_id", "")).strip()
+        name = str(payload.get("name", "")).strip()
+        description = str(payload.get("description", "")).strip()
+        visibility = str(payload.get("visibility", "global")).strip() or "global"
+
+        if not concept_id or not name:
+            raise HTTPException(status_code=400, detail="concept_id and name are required")
+
+        concept_node = graph_manager.nodes_data.get(concept_id)
+        if not concept_node or concept_node.get("level") != "CONCEPT":
+            raise HTTPException(status_code=404, detail="Concept not found")
+
+        course_id = str(concept_node.get("course_owner", "")).strip()
+        if current_user.get("role") != "admin" and course_id not in current_user.get("course_ids", []):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        result = graph_service.create_fact(
+            concept_id=concept_id,
+            name=name,
+            course_owner=course_id,
+            description=description,
+            visibility=visibility,
+        )
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("message", "Failed to create fact"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # 🔹 Student enrollment (protected)
 @app.post("/enrol", response_model=EnrollmentResponse, tags=["Enrollment"])
 def enrol_student(
@@ -2423,9 +2534,11 @@ def get_professor_submissions(
         for row in rows:
             if row.get("course_id") != course_id:
                 continue
+            canonical_record_id = row.get("id") or row.get("record_id") or row.get("submission_id")
             items.append(
                 {
-                    "submission_id": row.get("id"),
+                    "submission_id": canonical_record_id,
+                    "record_id": canonical_record_id,
                     "student_id": row.get("student_id"),
                     "assignment_id": row.get("assignment_id"),
                     "status": row.get("status"),
@@ -2449,7 +2562,7 @@ def grade_defence_record(
 ):
     """Approve or reject a defence record; optionally with modified grade/feedback."""
     try:
-        record_id = payload.get("record_id")
+        record_id = str(payload.get("record_id", "")).strip()
         action = payload.get("action")  # "approve" or "reject"
         modified_grade = payload.get("modified_grade")
         modified_feedback = payload.get("modified_feedback")
@@ -2459,23 +2572,58 @@ def grade_defence_record(
         
         # Read defence records
         defence_records = graph_manager._read_json_list(graph_manager._defence_records_path())
-        record = next((r for r in defence_records if r.get("record_id") == record_id), None)
+        record = None
+        for row in defence_records:
+            variants = [
+                str(row.get("record_id", "")).strip(),
+                str(row.get("id", "")).strip(),
+                str(row.get("submission_id", "")).strip(),
+            ]
+            if record_id in variants:
+                record = row
+                break
         
         if not record:
             raise HTTPException(status_code=404, detail="Record not found")
+
+        record_course_id = str(record.get("course_id", "")).strip()
+        if (
+            current_user.get("role") != "admin"
+            and record_course_id
+            and record_course_id not in current_user.get("course_ids", [])
+        ):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        canonical_record_id = (
+            str(record.get("id", "")).strip()
+            or str(record.get("record_id", "")).strip()
+            or str(record.get("submission_id", "")).strip()
+            or record_id
+        )
+        # Normalize id fields to avoid format drift across historical rows.
+        record["id"] = canonical_record_id
+        record["record_id"] = canonical_record_id
+        record["submission_id"] = canonical_record_id
         
         # Update based on action
         if action == "approve":
             record["professor_approved"] = True
             record["professor_grade"] = modified_grade if modified_grade is not None else record.get("ai_recommended_grade", 0.5)
             record["professor_feedback"] = modified_feedback or record.get("ai_feedback", "")
+            record["final_grade"] = record.get("professor_grade")
+            record["final_feedback"] = record.get("professor_feedback")
+            record["status"] = "approved"
         elif action == "reject":
             record["professor_approved"] = False
             record["professor_grade"] = 0.0
             record["professor_feedback"] = modified_feedback or "Rejected by professor"
+            record["final_grade"] = 0.0
+            record["final_feedback"] = record.get("professor_feedback")
+            record["status"] = "rejected_second_defence_required"
         
         record["professor_id"] = current_user.get("user_id", "")
         record["graded_at"] = datetime.now(timezone.utc).isoformat()
+        record["updated_at"] = record["graded_at"]
         
         # Save
         graph_manager._write_json_list(graph_manager._defence_records_path(), defence_records)
@@ -2487,7 +2635,7 @@ def grade_defence_record(
             target_user_id=record.get("student_id", ""),
         )
         
-        return {"status": "success", "record_id": record_id, "action": action}
+        return {"status": "success", "record_id": canonical_record_id, "action": action}
     
     except HTTPException:
         raise
@@ -2605,6 +2753,98 @@ def update_concept(
         
         return {"status": "success", "concept_id": concept_id, "concept": concept}
     
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/graph-edge", tags=["Professor"])
+def add_professor_graph_edge(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Create or upsert a directed concept relationship edge."""
+    try:
+        source_id = str(payload.get("source_id", "")).strip()
+        target_id = str(payload.get("target_id", "")).strip()
+        relation = str(payload.get("relation", "REQUIRES")).strip().upper()
+        weight = float(payload.get("weight", 1.0) or 1.0)
+
+        if not source_id or not target_id:
+            raise HTTPException(status_code=400, detail="source_id and target_id are required")
+
+        source = graph_manager.get_concept_by_id(source_id)
+        target = graph_manager.get_concept_by_id(target_id)
+        if not source or not target:
+            raise HTTPException(status_code=404, detail="Source or target concept not found")
+
+        source_course = str(source.get("course_owner", "")).strip()
+        target_course = str(target.get("course_owner", "")).strip()
+        if source_course != target_course:
+            raise HTTPException(status_code=400, detail="Cross-course edges are not allowed")
+        if (
+            current_user.get("role") != "admin"
+            and source_course
+            and source_course not in current_user.get("course_ids", [])
+        ):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        result = graph_manager.add_concept_relationship(
+            source_id=source_id,
+            target_id=target_id,
+            relation=relation,
+            weight=weight,
+        )
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("message", "Failed to add graph edge"))
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/graph-edge/delete", tags=["Professor"])
+def remove_professor_graph_edge(
+    payload: Dict[str, Any],
+    current_user: Dict = Depends(get_professor_user),
+):
+    """Delete directed concept relationship edge(s)."""
+    try:
+        source_id = str(payload.get("source_id", "")).strip()
+        target_id = str(payload.get("target_id", "")).strip()
+        relation = str(payload.get("relation", "")).strip().upper()
+
+        if not source_id or not target_id:
+            raise HTTPException(status_code=400, detail="source_id and target_id are required")
+
+        source = graph_manager.get_concept_by_id(source_id)
+        target = graph_manager.get_concept_by_id(target_id)
+        if not source or not target:
+            raise HTTPException(status_code=404, detail="Source or target concept not found")
+
+        source_course = str(source.get("course_owner", "")).strip()
+        target_course = str(target.get("course_owner", "")).strip()
+        if source_course != target_course:
+            raise HTTPException(status_code=400, detail="Cross-course edges are not allowed")
+        if (
+            current_user.get("role") != "admin"
+            and source_course
+            and source_course not in current_user.get("course_ids", [])
+        ):
+            raise HTTPException(status_code=403, detail="Forbidden for requested course")
+
+        result = graph_manager.remove_concept_relationship(
+            source_id=source_id,
+            target_id=target_id,
+            relation=relation or None,
+        )
+        if result.get("status") != "success":
+            raise HTTPException(status_code=404, detail=result.get("message", "Failed to remove graph edge"))
+
+        return result
     except HTTPException:
         raise
     except Exception as e:

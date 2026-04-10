@@ -8,7 +8,7 @@ import os
 import math
 import uuid
 import threading
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
 import logging
 
@@ -1111,6 +1111,99 @@ class GraphManager:
         self._save_graph()
         
         return {"status": "success", "source": concept_id, "target": prerequisite_id, "weight": float(weight)}
+
+    def add_concept_relationship(
+        self,
+        source_id: str,
+        target_id: str,
+        relation: str,
+        weight: float = 1.0,
+    ) -> Dict[str, Any]:
+        """Add a directed relationship between concept nodes."""
+        source = self.nodes_data.get(source_id)
+        target = self.nodes_data.get(target_id)
+        if not source or source.get("level") != "CONCEPT":
+            return {"status": "error", "message": "Invalid source concept"}
+        if not target or target.get("level") != "CONCEPT":
+            return {"status": "error", "message": "Invalid target concept"}
+
+        relation_norm = str(relation or "").strip().upper()
+        allowed = {"REQUIRES", "EXTENDS", "CONTRASTS", "CURRICULUM_PATH"}
+        if relation_norm not in allowed:
+            return {
+                "status": "error",
+                "message": f"Unsupported relation '{relation_norm}'. Allowed: {sorted(allowed)}",
+            }
+
+        course_error = self._check_same_course(source_id, target_id)
+        if course_error:
+            return {"status": "error", "message": course_error}
+
+        # Ensure one directed edge per relation pair by rewriting the edge set.
+        existing_edges = self._edge_records()
+        retained_edges = []
+        for edge in existing_edges:
+            data = edge.get("data", {})
+            if (
+                edge.get("source") == source_id
+                and edge.get("target") == target_id
+                and str(data.get("relation", "")).upper() == relation_norm
+            ):
+                continue
+            retained_edges.append(edge)
+
+        self._rebuild_graph(retained_edges)
+        self._add_edge_to_graph(
+            source_id,
+            target_id,
+            {"relation": relation_norm, "weight": float(weight)},
+        )
+        self._save_graph()
+        return {
+            "status": "success",
+            "source": source_id,
+            "target": target_id,
+            "relation": relation_norm,
+            "weight": float(weight),
+        }
+
+    def remove_concept_relationship(
+        self,
+        source_id: str,
+        target_id: str,
+        relation: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Remove directed relationship(s) between concept nodes."""
+        relation_norm = str(relation or "").strip().upper()
+        existing_edges = self._edge_records()
+        removed = 0
+        retained_edges = []
+        for edge in existing_edges:
+            data = edge.get("data", {})
+            same_pair = (
+                edge.get("source") == source_id and edge.get("target") == target_id
+            )
+            same_relation = (
+                not relation_norm
+                or str(data.get("relation", "")).upper() == relation_norm
+            )
+            if same_pair and same_relation:
+                removed += 1
+                continue
+            retained_edges.append(edge)
+
+        if removed == 0:
+            return {"status": "error", "message": "Relationship not found"}
+
+        self._rebuild_graph(retained_edges)
+        self._save_graph()
+        return {
+            "status": "success",
+            "removed": removed,
+            "source": source_id,
+            "target": target_id,
+            "relation": relation_norm or None,
+        }
 
     def get_concept_nodes(self, course_id: Optional[str] = None) -> List[Dict]:
         """Return concept nodes, optionally filtered by course owner."""

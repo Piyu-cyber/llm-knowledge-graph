@@ -1,82 +1,112 @@
 # Frontend-Backend Feature Audit
 
 Date: 2026-04-10
-Scope: React frontend in frontend/src against FastAPI backend in backend/app.py
+Scope: React frontend in frontend/src audited against FastAPI backend routes in backend/app.py
 
-## Summary
+## Executive Status
 
-- Workspace diagnostics: no compile/lint errors currently reported.
-- Core student and professor journeys are now wired end-to-end.
-- Remaining gaps are now mostly UX depth items, not missing backend integration.
+- Core Student and Professor workflows are implemented and integrated end-to-end.
+- Remaining work is no longer only polish: there are still backend capabilities not surfaced in frontend flows.
+- Learning-path sequencing plus dependency edge authoring are now implemented.
 
-## Classification Matrix
+## Done (Verified End-to-End)
 
-### Fully Working End-to-End
+### Authentication and session handling
 
-- Authentication login + token-based API calls
-  - Frontend: frontend/src/App.jsx
-  - Backend: backend/app.py (/auth/login, /auth/me)
-- Student tutoring chat flow
-  - Frontend: frontend/src/StudentDashboard.jsx
-  - Backend: backend/app.py (/chat)
-- Student progress, achievements, classroom feed
-  - Frontend: frontend/src/StudentDashboard.jsx
-  - Backend: backend/app.py (/student/progress, /student/achievements, /student/classroom-feed)
-- Student assignment submission and status
-  - Frontend: frontend/src/StudentDashboard.jsx
-  - Backend: backend/app.py (/student/submit-assignment, /student/submissions/{submission_id})
-- Professor command center (announcements/coursework/submissions)
-  - Frontend: frontend/src/ProfessorDashboard.jsx
-  - Backend: backend/app.py (/professor/classroom-announcements, /professor/coursework, /professor/submissions)
-- HITL queue review actions
-  - Frontend: frontend/src/ProfessorDashboard.jsx
-  - Backend: backend/app.py (/professor/hitl-queue, /professor/hitl-queue/{queue_id}/action)
-- Cohort overview and student drill-down payload consumption
-  - Frontend: frontend/src/ProfessorDashboard.jsx
-  - Backend: backend/app.py (/professor/cohort-overview, /professor/cohort, /professor/students)
-- Learning path fetch + publish
-  - Frontend: frontend/src/ProfessorDashboard.jsx
-  - Backend: backend/app.py (/professor/learning-path GET/POST)
-- Professor private notes save + load
-  - Frontend: frontend/src/ProfessorDashboard.jsx
-  - Backend: backend/app.py (/professor/annotate POST/GET)
-- Graph concept metadata updates (priority/visibility/name/description)
-  - Frontend: frontend/src/ProfessorDashboard.jsx
-  - Backend: backend/app.py (/concept/{concept_id} PATCH, /professor/graph-visualization)
+- Login flow is implemented and token is persisted for API calls.
+- Role-based workspace routing (student/professor) is implemented.
+- Auth-expiry handling (401) is implemented in student and professor dashboards and returns users to sign-in.
+- Verified routes used: /auth/login, /auth/me (token-driven flows), protected route calls across student/professor APIs.
 
-### Backend Ready, Operationally Conditional
+### Student experience
 
-- Jina API embeddings path
-  - Works when API key/model entitlement is valid.
-  - If 401/403 occurs, service auto-disables API and falls back to local embeddings for process lifetime.
-  - File: backend/services/jina_multimodal_service.py
+- Live tutor chat is implemented with multimodal payload support (image attach in chat).
+- Classroom Hub sync is implemented (announcements, modules, coursework, discussion feed).
+- Progress visualization and trajectory display are implemented.
+- Assignment submission and defence status retrieval are implemented.
+- Achievement feed and AI insights panel are implemented.
+- Learning tools (quiz, notes, flashcards, weak-concept drills) are implemented through chat orchestration.
+- Verified routes used: /chat, /student/progress, /student/achievements, /student/classroom-feed, /student/submit-assignment, /student/submissions/{submission_id}.
 
-### Partially Implemented (UX depth still possible)
+### Professor experience
 
-- Learning path editor now supports add/remove/reorder with drag + publish.
-- Still no full prerequisite edge editor in UI (partial_order_edges currently sent empty).
+- Command Center is implemented (create announcements, create coursework, review submissions list).
+- HITL queue is implemented (fetch + approve/reject with editable grade/feedback).
+- Cohort overview and student drill-down are implemented using cohort and student data joins.
+- Graph screen is implemented for visualization refresh, ingest trigger, and concept metadata editing.
+- Learning path editor is implemented (load, add/remove, drag reorder, publish).
+- Student note save/load workflow is implemented.
+- Verified routes used: /professor/hitl-queue, /professor/hitl-queue/{queue_id}/action, /professor/cohort-overview, /professor/cohort, /professor/students, /professor/classroom-announcements (GET/POST), /professor/coursework (GET/POST), /professor/submissions, /professor/graph-visualization, /professor/learning-path (GET/POST), /professor/annotate (GET/POST), /concept/{concept_id} (PATCH), /ingest.
 
-### Not Yet Implemented as Product Features
+## Remaining (Not Yet Fully Delivered)
 
-- Full graph authoring UI for creating modules/topics/concepts/facts and manual edge creation from frontend.
-  - Backend primitives exist through services/graph layer, but dedicated professor UI workflows are not complete.
-- Rich professor note history management UI (list/history/versioning).
-  - Save/load latest note is implemented; advanced note management is not.
+### Functional gaps in frontend coverage
 
-## Implemented in this audit pass
+- Graph authoring coverage is now substantially expanded in UI.
+  - Module, topic, concept, fact, explicit edge create/delete, and a relationship canvas are implemented.
+  - Advanced authoring depth has been partially delivered:
+    - Multi-select + bulk edge create/delete are now implemented.
+    - Persistent drag layout for relationship canvas is now implemented (local storage per course).
+    - Undo/redo stack for edge mutations is now implemented.
+  - Remaining gap is full studio interaction depth (for example lasso selection and grouped transform actions).
 
-1. Professor auth-expiry handling wired
-   - Frontend now triggers re-login flow on professor-side 401 responses.
+### Product-depth gaps
 
-2. Professor notes retrieval implemented
-   - Added backend GET /professor/annotate and frontend note prefill behavior.
+- Professor note management now includes history/version browsing and version load into draft.
+- Graph UX is operational with visual relationship canvas support, drag persistence, multi-select batch operations, and edge undo/redo.
+  - Missing capabilities include lasso/group actions and graph-specific revision timeline.
 
-3. Learning path drag/drop implemented
-   - Added concept pool, add/remove, drag reorder, and publish persistence flow.
+## Backend Available But Not Wired To Frontend Screens
 
-4. Graph metadata edit actions expanded
-   - Concept name and description edits now saved through PATCH /concept/{concept_id}.
+- These routes are now wired through the frontend developer workbench under dev mode in App shell:
+  - /auth/register
+  - /enrol
+  - /interaction
+  - /query
+  - /graph and /graph-view
+  - Phase 6 operational routes (integrity/background-jobs/compliance/observability/llm-router/diagnostics)
 
-## Recommendation
+These capabilities are now represented in explicit frontend flows for validation and operations via developer mode; production-grade role-tailored UX can be iterated on top of this wiring.
 
-- Next high-value increment: add explicit prerequisite edge editor in professor graph UI and persist partial_order_edges in learning-path publish.
+## Next High-Value Steps
+
+1. Add backend tests for grade identifier normalization and graph-edge authorization.
+2. Add frontend regression coverage for graph authoring, learning-path publish, and submission history.
+3. Add lasso/group selection ergonomics and grouped transform interactions in graph canvas.
+4. Add graph editor revision timeline/history (beyond edge undo/redo stack).
+
+## Implementation Plan (Current)
+
+### Completed
+
+- Phase 1: Learning path dependency edge editor
+- Phase 2: Student submission history view
+- Phase 3: Professor manual grade workflow
+- Phase 4: Graph authoring MVP (module/topic/concept/fact + edge CRUD)
+
+### In Progress
+
+- Phase 5: Hardening and QA
+
+Testing focus
+- Backend tests for grading identifier normalization and graph-edge authorization.
+- Frontend regression checks for auth expiry, command center refresh, and learning-path publish.
+- UI state checks for empty/error/loading flows in graph authoring and note history features.
+
+## Implementation Progress Update (2026-04-10)
+
+Completed in code
+- Phase 1 implemented: learning path prerequisite dependency editor added in professor UI; publish now sends partial_order_edges and blocks cyclic dependencies client-side.
+- Phase 2 implemented: student submission history tab added using /student/submissions with detail drill-in to existing status panel.
+- Phase 3 implemented (Option B): professor manual grading UI added using /professor/grade from Command Center.
+- Phase 4 implemented: graph authoring now includes module/topic/concept/fact creation plus explicit edge create/delete.
+- Governance split implemented: CURRICULUM_PATH management separated from conceptual relationship management in UI.
+- Professor note history/version browser implemented with load-into-draft behavior.
+- Relationship canvas implemented for conceptual edge visualization and assisted selection.
+
+Remaining
+- Hardening and QA automation still in progress (backend and frontend regression test coverage).
+
+Current optional follow-ups
+- Add backend tests specifically for grade identifier normalization and graph edge mutation authorization paths.
+- Add studio-grade graph editing ergonomics (persistent layout, multi-select bulk edits, undo/redo).

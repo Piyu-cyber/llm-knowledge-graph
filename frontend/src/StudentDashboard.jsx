@@ -66,6 +66,7 @@ export default function StudentDashboard({
   const [courseModules, setCourseModules] = useState([]);
   const [upcomingCoursework, setUpcomingCoursework] = useState([]);
   const [discussionPosts, setDiscussionPosts] = useState([]);
+  const [submissionHistory, setSubmissionHistory] = useState([]);
   const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
   const [classroomStatus, setClassroomStatus] = useState({
     loading: false,
@@ -317,17 +318,26 @@ export default function StudentDashboard({
     }
     setClassroomStatus((prev) => ({ ...prev, loading: true, error: "" }));
     try {
-      const [progressRes, achievementsRes, classroomRes] = await Promise.all([
+      const [progressRes, achievementsRes, classroomRes, submissionsRes] = await Promise.all([
         StudentApi.progress(apiBase, token, chatCourse, { forceRefresh }),
         StudentApi.achievements(apiBase, token, { forceRefresh }),
         StudentApi.classroomFeed(apiBase, token, chatCourse, { forceRefresh }),
+        StudentApi.submissions(apiBase, token, chatCourse, { forceRefresh }),
       ]);
-      if (handleAuthFailure(progressRes) || handleAuthFailure(achievementsRes) || handleAuthFailure(classroomRes)) return;
-      if (!progressRes.ok || !achievementsRes.ok || !classroomRes.ok) {
+      if (
+        handleAuthFailure(progressRes) ||
+        handleAuthFailure(achievementsRes) ||
+        handleAuthFailure(classroomRes) ||
+        handleAuthFailure(submissionsRes)
+      ) {
+        return;
+      }
+      if (!progressRes.ok || !achievementsRes.ok || !classroomRes.ok || !submissionsRes.ok) {
         const detail =
           classroomRes.data?.detail ||
           progressRes.data?.detail ||
           achievementsRes.data?.detail ||
+          submissionsRes.data?.detail ||
           classroomRes.data?.message ||
           "Failed to sync classroom data.";
         setClassroomStatus((prev) => ({ ...prev, error: String(detail) }));
@@ -356,6 +366,19 @@ export default function StudentDashboard({
           })),
         );
         setDiscussionPosts(classroomRes.data?.discussions || []);
+      }
+      if (submissionsRes.ok) {
+        setSubmissionHistory(
+          (submissionsRes.data?.items || []).map((row) => ({
+            submissionId: row.submission_id,
+            assignmentId: row.assignment_id || "n/a",
+            courseId: row.course_id || "n/a",
+            status: row.status || "unknown",
+            finalGrade: row.final_grade,
+            createdAt: row.created_at || "",
+            updatedAt: row.updated_at || "",
+          })),
+        );
       }
       setClassroomStatus((prev) => ({
         ...prev,
@@ -854,6 +877,12 @@ export default function StudentDashboard({
                 Defence
               </button>
               <button
+                className={`student-tab-btn ${studentTab === "history" ? "active" : ""}`}
+                onClick={() => setStudentTab("history")}
+              >
+                History
+              </button>
+              <button
                 className={`student-tab-btn ${studentTab === "achievements" ? "active" : ""}`}
                 onClick={() => setStudentTab("achievements")}
               >
@@ -1159,6 +1188,61 @@ export default function StudentDashboard({
                       </div>
                     )}
                 </div>
+              )}
+            </div>
+          )}
+
+          {studentTab === "history" && (
+            <div className="widget">
+              <h3>Submission History</h3>
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--text-tertiary)",
+                  marginBottom: "1rem",
+                }}
+              >
+                Review all submissions for this course and open detailed defence status.
+              </p>
+              {submissionHistory.length > 0 ? (
+                <div style={{ display: "grid", gap: "0.55rem" }}>
+                  {submissionHistory.map((item) => (
+                    <div
+                      key={item.submissionId}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: "0.7rem",
+                        alignItems: "center",
+                        padding: "0.6rem 0.7rem",
+                        border: "1px solid var(--border-light)",
+                        borderRadius: "6px",
+                        background: "var(--bg-secondary)",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: "0.83rem", fontWeight: 600 }}>
+                          {item.assignmentId} - {item.submissionId}
+                        </div>
+                        <div style={{ fontSize: "0.76rem", color: "var(--text-secondary)" }}>
+                          {item.status} | {item.createdAt ? new Date(item.createdAt).toLocaleString() : "n/a"}
+                        </div>
+                      </div>
+                      <button
+                        className="btn-solid"
+                        style={{ width: "auto", padding: "0.3rem 0.65rem" }}
+                        onClick={() => {
+                          setStudentTab("defence");
+                          loadSubmissionDetails(item.submissionId);
+                        }}
+                      >
+                        View Details
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="feed-empty">No submissions found for this course yet.</p>
               )}
             </div>
           )}
