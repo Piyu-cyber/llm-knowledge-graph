@@ -1,6 +1,7 @@
 # OmniProf Project Audit and Runbook (April 2026)
 
 This document is the operational source of truth for:
+
 - Current implementation status and remaining work
 - Local and Docker startup
 - Full test command matrix
@@ -9,8 +10,9 @@ This document is the operational source of truth for:
 ## 1. Project Audit Summary
 
 ### 1.1 What is implemented
+
 - Phase 0-6 test matrix is green in current repository state.
-- Backend uses FastAPI with RustWorkX local graph persistence (no external Neo4j requirement).
+- Backend uses FastAPI with RustWorkX local graph persistence.
 - Multi-agent orchestration is present via LangGraph.
 - Phase 5 student and professor dashboard MVP routes and frontend pages are present.
 - Phase 6 additions are present:
@@ -19,6 +21,7 @@ This document is the operational source of truth for:
   - Compliance service and audit-log support
 
 ### 1.2 What remains (important)
+
 - Production hardening still needed beyond acceptance tests:
   - True 24h soak run for background stability in a long-running environment
   - Real 30-concurrent load run with external load tool and persisted metrics artifact
@@ -115,6 +118,7 @@ python -m http.server 5500
 ```
 
 Open:
+
 - http://127.0.0.1:5500/frontend/student_dashboard.html
 - http://127.0.0.1:5500/frontend/professor_dashboard.html
 

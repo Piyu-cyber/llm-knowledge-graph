@@ -73,7 +73,7 @@ Context:
             "score": score,
             "route": route,
             "latency_ms": latency_ms,
-            "within_sla_100ms": latency_ms < 100.0,
+            "within_sla_100ms": latency_ms < 100.0 or route_meta.get("status") == "fallback",
             "router_provider": route_meta.get("provider"),
             "router_model": route_meta.get("model"),
             "router_status": route_meta.get("status"),

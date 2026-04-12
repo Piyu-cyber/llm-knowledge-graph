@@ -1,9 +1,10 @@
 # OmniProf Phase-Wise Testing Plan
 
 This plan aligns with:
+
 - `OmniProf_Assessment_Roadmap.pdf` (phase-gated delivery)
 - Current repository state after latest pull
-- Current architecture shift from Neo4j-based graph ops to `rustworkx`
+- Current architecture uses `rustworkx` graph ops
 
 ## Current Baseline (Observed)
 
@@ -24,14 +25,17 @@ This plan aligns with:
 ## Phase 0: Test Harness Stabilization (Do this first)
 
 ### Objective
+
 Make tests runnable and deterministic before phase-level validation.
 
 ### Scope
+
 - Install and standardize test runner and tools.
 - Migrate outdated scripts to current service signatures.
 - Create shared fixtures for app client, auth, temp files.
 
 ### Tasks
+
 1. Install test dependencies in project venv:
    - `pytest`
    - `pytest-cov`
@@ -45,6 +49,7 @@ Make tests runnable and deterministic before phase-level validation.
 4. Add a smoke test for app startup and `/docs` availability.
 
 ### Gate
+
 - `pytest -q` runs successfully.
 - No import/signature errors.
 
@@ -53,9 +58,11 @@ Make tests runnable and deterministic before phase-level validation.
 ## Phase 1: Auth + RBAC Foundation Testing
 
 ### Objective
+
 Validate authentication and role enforcement end-to-end.
 
 ### What to test
+
 - `/auth/register`, `/auth/login`, `/auth/me`
 - Token failure paths:
   - expired token
@@ -67,6 +74,7 @@ Validate authentication and role enforcement end-to-end.
   - admin full access
 
 ### Test types
+
 - Unit:
   - JWT create/verify, password hashing and verification
   - RBAC filter builders (`backend/auth/rbac.py`)
@@ -75,6 +83,7 @@ Validate authentication and role enforcement end-to-end.
   - course-level visibility behavior
 
 ### Gate
+
 - 100% pass on auth + RBAC integration suite.
 - Zero unauthorized data leak in role tests.
 
@@ -83,9 +92,11 @@ Validate authentication and role enforcement end-to-end.
 ## Phase 2: Ingestion + Graph Build Testing (Now rustworkx-backed)
 
 ### Objective
+
 Validate ingestion pipeline and graph construction correctness.
 
 ### What to test
+
 - Multi-format extraction paths:
   - PDF, DOCX, PPTX, TXT (at least one fixture each)
 - LLM extraction robustness:
@@ -102,6 +113,7 @@ Validate ingestion pipeline and graph construction correctness.
   - `/ingest-debug`
 
 ### Test types
+
 - Unit:
   - `IngestionService` stage transitions and `get_last_status()`
   - graph persistence load/save (`graph_store.pkl`) behavior
@@ -109,6 +121,7 @@ Validate ingestion pipeline and graph construction correctness.
   - ingest sample file -> graph has >0 nodes and expected relations
 
 ### Gate
+
 - Ingest returns non-zero concept/relationship counts for known sample docs.
 - `/graph-view` returns `nodes` and `edges` schema compatible with frontend.
 
@@ -117,9 +130,11 @@ Validate ingestion pipeline and graph construction correctness.
 ## Phase 3: Personalization / Overlay / Query-Time Access Testing
 
 ### Objective
+
 Verify query-time filtering and personalization logic correctness.
 
 ### What to test
+
 - Query path (`/query`) for:
   - normal query
   - ambiguous query branch
@@ -131,12 +146,14 @@ Verify query-time filtering and personalization logic correctness.
   - confidence bounds and expected adjustments
 
 ### Test types
+
 - Unit:
   - CRAG decision and fallback branches (`CRAGService`)
 - Integration:
   - role-based querying with seeded graph + rag content
 
 ### Gate
+
 - No restricted graph content in student query responses.
 - All CRAG branches tested and passing.
 
@@ -145,9 +162,11 @@ Verify query-time filtering and personalization logic correctness.
 ## Phase 4: Memory + Agent Orchestration Testing
 
 ### Objective
+
 Validate reliability and safety of multi-agent flows.
 
 ### What to test
+
 - Agent graph orchestration transitions (`backend/agents/`)
 - Cognitive engine behavior and fallbacks
 - Background tasks:
@@ -157,12 +176,14 @@ Validate reliability and safety of multi-agent flows.
   - one agent failure should not crash full request path
 
 ### Test types
+
 - Unit:
   - state transition tests for orchestration graph
 - Integration:
   - chat/query endpoint with agent-driven branches
 
 ### Gate
+
 - End-to-end agent path completes under normal and degraded conditions.
 - No uncaught exceptions in orchestration loop tests.
 
@@ -171,9 +192,11 @@ Validate reliability and safety of multi-agent flows.
 ## Phase 5: Dashboard + Frontend E2E Testing
 
 ### Objective
+
 Ensure user workflows are functional in UI.
 
 ### What to test
+
 - Upload -> ingest -> diagnostics panel updates
 - Query -> answer -> graph visualization render
 - Knowledge Graph Browser:
@@ -182,10 +205,12 @@ Ensure user workflows are functional in UI.
 - API base fallback logic for local ports (`8000`, `8010`)
 
 ### Test types
+
 - Manual scripted checks (minimum)
 - Optional Playwright/Cypress e2e automation
 
 ### Gate
+
 - All critical user flows pass without manual workaround.
 - Graph renders as node-edge network, not only cards.
 
@@ -194,9 +219,11 @@ Ensure user workflows are functional in UI.
 ## Phase 6: Performance / Reliability / Hardening
 
 ### Objective
+
 Prove system reliability under realistic load and failure.
 
 ### What to test
+
 - Throughput and latency:
   - concurrent `/query`
   - concurrent `/ingest` (bounded)
@@ -209,12 +236,14 @@ Prove system reliability under realistic load and failure.
   - malformed payloads
 
 ### Tooling suggestions
+
 - `locust` or `k6` for load
 - pytest markers:
   - `@pytest.mark.slow`
   - `@pytest.mark.load`
 
 ### Gate
+
 - SLA targets defined and met.
 - No critical crash or data corruption under stress tests.
 

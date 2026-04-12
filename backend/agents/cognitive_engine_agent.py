@@ -11,11 +11,13 @@ Features:
 
 import logging
 import os
+import asyncio
 from typing import Optional
 
 from backend.agents.state import AgentState
 from backend.services.cognitive_engine import CognitiveEngine
 from backend.db.graph_manager import GraphManager
+from backend.services.class_intelligence_service import compute_cohort_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +281,13 @@ class CognitiveEngineAgent:
                            f"theta {current_theta:.2f}→{new_theta:.2f}, "
                            f"slip {current_slip:.3f}→{new_slip:.3f}, "
                            f"mastery {current_theta:.2f}→{new_mastery:.2f}")
+                course_id = state.metadata.get("course_id")
+                if course_id:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(compute_cohort_alerts(course_id=course_id))
+                    except RuntimeError:
+                        asyncio.run(compute_cohort_alerts(course_id=course_id))
                 return True
             
             return False

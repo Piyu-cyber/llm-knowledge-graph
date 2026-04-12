@@ -214,6 +214,85 @@ class InteractionResponse(BaseModel):
     difficulty: float
 
 
+class StudyBlock(BaseModel):
+    title: str
+    description: str
+    duration_minutes: int
+    priority: str
+    concept_ids: List[str] = []
+
+
+class StudyPlanResponse(BaseModel):
+    blocks: List[StudyBlock] = []
+    generated_at: str
+    error: Optional[str] = None
+
+
+class SmartNote(BaseModel):
+    session_id: str
+    course_id: str
+    created_at: str
+    concepts_covered: List[str] = []
+    key_definitions: Dict[str, str] = {}
+    connections: List[str] = []
+    follow_up_suggestions: List[str] = []
+
+
+class HintRequest(BaseModel):
+    question_text: str
+    draft_answer: str
+    concept_ids: List[str]
+    course_id: str
+    assignment_id: Optional[str] = None
+
+
+class HintResponse(BaseModel):
+    hint: str
+    concept_referenced: Optional[str] = None
+    confidence: float
+
+
+class CohortAlert(BaseModel):
+    concept_id: str
+    concept_name: str
+    struggling_pct: float
+    struggling_count: int
+    urgent: bool
+    related_assignment: Optional[str] = None
+
+
+class LessonSegment(BaseModel):
+    title: str
+    duration_minutes: int
+    concepts: List[str] = []
+    teaching_notes: str
+    suggested_activities: List[str] = []
+
+
+class QuizQuestion(BaseModel):
+    concept_id: str
+    type: str
+    question: str
+    options: Optional[List[str]] = None
+    answer: str
+    difficulty: str
+
+
+class LessonPlanResponse(BaseModel):
+    upload_id: str
+    lesson_plan: List[LessonSegment] = []
+    quiz_suggestions: List[QuizQuestion] = []
+    conflicts: List[Dict[str, Any]] = []
+    generated_at: str
+
+
+class QuizGenerationRequest(BaseModel):
+    concept_ids: List[str]
+    difficulty: str
+    count: int = Field(..., ge=1, le=20)
+    course_id: str
+
+
 # ==================== Error Schemas ====================
 class ErrorResponse(BaseModel):
     """Error response schema"""

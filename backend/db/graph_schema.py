@@ -74,7 +74,7 @@ class GraphNode:
             "source_doc_ref": self.source_doc_ref,
             "visibility": self.visibility.value,
             "embedding": self.embedding,
-            "created_at": None,  # Will be set by Neo4j
+            "created_at": None,  # Will be set on persistence
         }
 
 

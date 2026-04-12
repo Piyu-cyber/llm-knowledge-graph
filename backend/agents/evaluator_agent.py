@@ -184,6 +184,7 @@ class EvaluatorAgent:
                     status="pending_integrity_review",
                     anomalous_input=False
                 )
+                setattr(record, "evaluator_confidence", confidence)
                 
                 # Persist to local graph store
                 self._write_defence_record(record, course_id=state.metadata.get("course_id", "unknown"))
@@ -503,6 +504,7 @@ Return ONLY the JSON.
         try:
             payload = record.to_dict()
             payload["course_id"] = course_id or "unknown"
+            payload["evaluator_confidence"] = float(getattr(record, "evaluator_confidence", 0.0) or 0.0)
             result = self.graph_manager.create_defence_record(payload)
             return result.get("status") == "success"
         except Exception as e:

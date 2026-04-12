@@ -9,6 +9,24 @@ function qs(params = {}) {
 
 const getCache = new Map();
 
+function extractErrorDetail(data) {
+  if (!data) return "";
+  if (typeof data === "string") return data;
+  if (typeof data.detail === "string") return data.detail;
+  return "";
+}
+
+function notifyAuthInvalid(reason) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent("omniprof-auth-invalid", {
+      detail: {
+        reason: reason || "Session expired. Please sign in again.",
+      },
+    }),
+  );
+}
+
 function cacheKey(apiBase, path, token) {
   return `${apiBase}|${path}|${token || ""}`;
 }
@@ -53,6 +71,13 @@ export async function apiRequest(
     // Keep plain text payloads
   }
   const payload = { ok: res.ok, status: res.status, elapsedMs, data };
+  if (res.status === 401 && token) {
+    const detail = extractErrorDetail(data);
+    const lowerDetail = String(detail || "").toLowerCase();
+    if (lowerDetail.includes("invalid token") || lowerDetail.includes("signature verification failed") || lowerDetail.includes("expired")) {
+      notifyAuthInvalid(detail);
+    }
+  }
   if (isGet && cacheTtlMs > 0 && res.ok) {
     getCache.set(key, { expiresAt: Date.now() + cacheTtlMs, payload });
   }
@@ -93,6 +118,24 @@ export const StudentApi = {
       token,
       cacheTtlMs: 12000,
       forceRefresh,
+    }),
+  studyPlan: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, `/student/study-plan${qs({ course_id: courseId })}`, {
+      token,
+      cacheTtlMs: 12000,
+      forceRefresh,
+    }),
+  notes: (apiBase, token, courseId, limit = 20, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, `/student/notes${qs({ course_id: courseId, limit })}`, {
+      token,
+      cacheTtlMs: 8000,
+      forceRefresh,
+    }),
+  hint: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/hints", {
+      method: "POST",
+      token,
+      body: payload,
     }),
   submissions: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(apiBase, `/student/submissions${qs({ course_id: courseId })}`, {
@@ -180,6 +223,12 @@ export const ProfessorApi = {
       `/professor/cohort-overview${qs({ course_id: courseId, inactivity_days: inactivityDays })}`,
       { token, cacheTtlMs: 10000, forceRefresh },
     ),
+  cohortAlerts: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, `/professor/cohort-alerts${qs({ course_id: courseId })}`, {
+      token,
+      cacheTtlMs: 10000,
+      forceRefresh,
+    }),
   cohort: (apiBase, token, courseId, { forceRefresh = false } = {}) =>
     apiRequest(apiBase, `/professor/cohort${qs({ course_id: courseId })}`, {
       token,
@@ -314,6 +363,18 @@ export const ProfessorApi = {
       formData: fd,
     });
   },
+  lessonPlan: (apiBase, token, uploadId, { forceRefresh = false } = {}) =>
+    apiRequest(apiBase, `/professor/lesson-plan/${encodeURIComponent(uploadId)}`, {
+      token,
+      cacheTtlMs: 6000,
+      forceRefresh,
+    }),
+  generateQuiz: (apiBase, token, payload) =>
+    apiRequest(apiBase, "/professor/generate-quiz", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
   phase6Health: (apiBase, token, { forceRefresh = false } = {}) =>
     apiRequest(apiBase, "/llm-router/health", {
       token,

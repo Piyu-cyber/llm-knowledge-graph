@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AuthApi, ProfessorApi, StudentApi } from "./endpoints";
 import StudentDashboard from "./StudentDashboard";
 import ProfessorDashboard from "./ProfessorDashboard";
@@ -16,6 +16,12 @@ function parseJwt(token) {
 function roleFromJwt(payload) {
   if (!payload) return "Guest";
   return payload.role || payload.user_role || "Guest";
+}
+
+function isJwtExpired(payload) {
+  if (!payload || typeof payload.exp !== "number") return false;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return payload.exp <= nowSeconds;
 }
 
 export default function App() {
@@ -100,6 +106,41 @@ export default function App() {
     setAuthError("");
     setAuthView("landing");
   };
+
+  useEffect(() => {
+    const handler = (event) => {
+      const reason = event?.detail?.reason || "Session expired. Please sign in again.";
+      saveToken("");
+      setAuthError(reason);
+      setAuthView("login");
+      setActive("student");
+    };
+    window.addEventListener("omniprof-auth-invalid", handler);
+    return () => window.removeEventListener("omniprof-auth-invalid", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    const payload = parseJwt(token);
+    if (!payload || isJwtExpired(payload)) {
+      saveToken("");
+      setAuthError("Session expired. Please sign in again.");
+      setAuthView("login");
+      setActive("student");
+      return;
+    }
+    AuthApi.me(apiBase, token).then((res) => {
+      if (!res.ok && res.status === 401) {
+        saveToken("");
+        const reason = res.data?.detail || "Session invalid. Please sign in again.";
+        setAuthError(reason);
+        setAuthView("login");
+        setActive("student");
+      }
+    }).catch(() => {
+      // Keep session state on transient network errors.
+    });
+  }, [apiBase, token]);
 
   const quickLogin = async (username, password) => {
     setBusy(true);

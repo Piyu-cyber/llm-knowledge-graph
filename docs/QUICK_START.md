@@ -3,6 +3,7 @@
 ## What You're Looking At
 
 **OmniProf** is a production-ready AI-driven educational platform built with:
+
 - **LangGraph** for multi-agent orchestration (8 specialized agents)
 - **RustWorkX** for local knowledge graph persistence
 - **FAISS** for vector-based episodic memory
@@ -15,22 +16,23 @@ The system is **fully functional, tested, and ready to deploy**.
 
 ## Key Statistics
 
-| Metric | Value |
-|--------|-------|
-| Phases Completed | 0-6 (100%) ✅ |
-| Services Implemented | 12 |
-| API Endpoints | 20+ |
-| Test Cases | 95 (100% passing) |
-| Code Coverage | 85%+ |
-| Agents Implemented | 8 |
-| Lines of Code | 15,000+ |
-| Documentation Pages | 4 comprehensive |
+| Metric               | Value             |
+| -------------------- | ----------------- |
+| Phases Completed     | 0-6 (100%) ✅     |
+| Services Implemented | 12                |
+| API Endpoints        | 20+               |
+| Test Cases           | 95 (100% passing) |
+| Code Coverage        | 85%+              |
+| Agents Implemented   | 8                 |
+| Lines of Code        | 15,000+           |
+| Documentation Pages  | 4 comprehensive   |
 
 ---
 
 ## What Works Right Now
 
 ### ✅ Core Functionality
+
 - **Multi-Agent Tutoring**: Students get adaptive explanations tailored to mastery level
 - **Submission Evaluation**: Professors can evaluate student work with multi-turn dialog
 - **Integrity Checking**: Automatic writing style analysis detects anomalies
@@ -39,11 +41,13 @@ The system is **fully functional, tested, and ready to deploy**.
 - **Access Control**: Role-based system (student/professor/admin)
 
 ### ✅ User Experiences
+
 - **Student**: Chat-based tutoring with adaptive depth, progress tracking, achievement badges
 - **Professor**: Class management, student performance analytics, content administration
 - **System**: Background job processing, compliance audit logging, error recovery
 
 ### ✅ Data Persistence
+
 - Knowledge graph with 4-level hierarchy (Module → Topic → Concept → Fact)
 - Student knowledge overlays tracking mastery per concept
 - Session history and interaction logs
@@ -58,7 +62,7 @@ The system is **fully functional, tested, and ready to deploy**.
 backend/
 ├── agents/           # 8 LangGraph agents (tutoring, evaluation, integrity, etc.)
 ├── services/         # 12 core services (RAG, CRAG, LLM Router, compliance, etc.)
-├── db/               # RustWorkX graph driver, Neo4j-compatible schema
+├── db/               # RustWorkX graph driver and graph schema
 ├── auth/             # JWT authentication, RBAC
 └── app.py            # FastAPI entrypoint with 20+ routes
 
@@ -81,11 +85,13 @@ data/
 ## How to Get Running (3 Steps)
 
 ### Step 1: Install
+
 ```bash
 pip install -r backend/requirements.txt
 ```
 
 ### Step 2: Configure
+
 ```bash
 cp .env.example .env
 # Configure at least one provider key:
@@ -94,6 +100,7 @@ cp .env.example .env
 ```
 
 ### Step 3: Run
+
 ```bash
 uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
 # Open http://localhost:8000/docs
@@ -117,6 +124,7 @@ Use these for local testing only and change/remove them for shared environments.
 ## API Quick Reference
 
 ### Chat with AI (Main Endpoint)
+
 ```bash
 curl -X POST http://localhost:8000/chat \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -129,12 +137,14 @@ curl -X POST http://localhost:8000/chat \
 ```
 
 Response includes:
+
 - AI's response
 - Which agent handled it (TA Agent, Evaluator, etc.)
 - New achievements earned
 - Context sources used
 
 ### Ingest Document
+
 ```bash
 curl -X POST http://localhost:8000/ingest \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -142,6 +152,7 @@ curl -X POST http://localhost:8000/ingest \
 ```
 
 ### Get Student Progress
+
 ```bash
 curl -X GET http://localhost:8000/student-overlay/user_123 \
   -H "Authorization: Bearer YOUR_TOKEN"
@@ -151,16 +162,16 @@ curl -X GET http://localhost:8000/student-overlay/user_123 \
 
 ## The 8 Agents (What Each Does)
 
-| Agent | Purpose | Used When |
-|-------|---------|-----------|
-| **TA Agent** | Tutoring | Student asks questions |
-| **Evaluator Agent** | Assessment | Professor evaluates submissions |
-| **Integrity Agent** | Plagiarism check | Writing style analysis needed |
-| **Cognitive Engine** | Update knowledge state | After evaluation completes |
-| **Grader Agent** | Confidence scoring | RAG pipeline needs relevance |
-| **Curriculum Agent** | Adapt learning path | Student needs recommendations |
-| **Gamification Agent** | Badges & rewards | Achievement tracking |
-| **Summarisation Agent** | Memory management | Background task (async) |
+| Agent                   | Purpose                | Used When                       |
+| ----------------------- | ---------------------- | ------------------------------- |
+| **TA Agent**            | Tutoring               | Student asks questions          |
+| **Evaluator Agent**     | Assessment             | Professor evaluates submissions |
+| **Integrity Agent**     | Plagiarism check       | Writing style analysis needed   |
+| **Cognitive Engine**    | Update knowledge state | After evaluation completes      |
+| **Grader Agent**        | Confidence scoring     | RAG pipeline needs relevance    |
+| **Curriculum Agent**    | Adapt learning path    | Student needs recommendations   |
+| **Gamification Agent**  | Badges & rewards       | Achievement tracking            |
+| **Summarisation Agent** | Memory management      | Background task (async)         |
 
 ---
 
@@ -178,6 +189,7 @@ pytest --cov=backend
 ```
 
 **Test Phases**:
+
 - Phase 0: Test infrastructure ✅
 - Phase 1: Authentication ✅
 - Phase 2: Knowledge graph ✅
@@ -191,6 +203,7 @@ pytest --cov=backend
 ## What Still Needs to Be Done
 
 ### Phase 7: Production Hardening (Planned)
+
 - [ ] 24-hour stability soak test
 - [ ] 30+ concurrent user load test
 - [ ] Speculative decoding research (TTFT improvement)
@@ -198,6 +211,7 @@ pytest --cov=backend
 - [ ] Enhanced monitoring (Prometheus, Grafana)
 
 ### Frontend Requirements
+
 - [ ] Convert HTML mockups to React/Vue components
 - [ ] Real chat UI with WebSocket
 - [ ] Student progress dashboard
@@ -224,19 +238,20 @@ pytest --cov=backend
 
 ## Documentation Files
 
-| File | Purpose |
-|------|---------|
-| README.md | Complete setup and overview |
-| COMPLETION_STATUS.md | Detailed phase-by-phase breakdown |
+| File                         | Purpose                                   |
+| ---------------------------- | ----------------------------------------- |
+| README.md                    | Complete setup and overview               |
+| COMPLETION_STATUS.md         | Detailed phase-by-phase breakdown         |
 | PROJECT_AUDIT_AND_RUNBOOK.md | Operational commands and API verification |
-| PHASE_WISE_TESTING_PLAN.md | Testing strategy and gates |
-| RUN_COMMANDS.md | Copy-paste startup commands |
+| PHASE_WISE_TESTING_PLAN.md   | Testing strategy and gates                |
+| RUN_COMMANDS.md              | Copy-paste startup commands               |
 
 ---
 
 ## Key Technologies
 
 **Backend Stack**:
+
 - FastAPI (REST API)
 - LangGraph (agent orchestration)
 - Groq API (LLM, llama-3.3-70b-versatile)
@@ -246,6 +261,7 @@ pytest --cov=backend
 - Pydantic (data validation)
 
 **Deployment**:
+
 - Docker & Docker Compose ready
 - AWS/Azure/GCP compatible
 - Kubernetes-ready
@@ -255,6 +271,7 @@ pytest --cov=backend
 ## Support
 
 **Questions about**:
+
 - **Setup**: See README.md Installation section
 - **API usage**: See PROJECT_AUDIT_AND_RUNBOOK.md API section + http://localhost:8000/docs
 - **Testing**: See PHASE_WISE_TESTING_PLAN.md

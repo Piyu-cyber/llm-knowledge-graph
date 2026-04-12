@@ -1,5 +1,5 @@
 """
-OmniProf v3.0 — RustWorkX-based Graph Manager (Neo4j Replacement)
+OmniProf v3.0 — RustWorkX-based Graph Manager
 In-memory graph with JSON persistence for knowledge graph operations
 """
 
@@ -42,7 +42,7 @@ class GraphManager:
                 instance._initialized = False
             return instance
     
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = "data", *args, **kwargs):
         if getattr(self, "_initialized", False):
             return
 
@@ -1399,13 +1399,3 @@ class GraphManager:
     def get_edge_count(self) -> int:
         """Get total number of edges"""
         return len(self.graph.edge_list())
-
-
-# Alias for backward compatibility
-class GraphManager(GraphManager):
-    """Backward compatibility alias - uses RustWorkX backend"""
-    
-    def __init__(self, uri: Optional[str] = None, user: Optional[str] = None,
-                 password: Optional[str] = None, data_dir: str = "data"):
-        # Ignore Neo4j parameters, use RustWorkX backend
-        super().__init__(data_dir=data_dir)

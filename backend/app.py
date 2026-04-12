@@ -27,6 +27,12 @@ from .services.compliance_service import ComplianceService
 from .services.integrity_policy_service import IntegrityPolicyService
 from .services.nondeterminism_service import NondeterminismService
 from .services.memory_service import MemoryService, EpisodicRecord
+from .services.study_planner_service import generate_study_plan
+from .services.smart_notes_service import generate_session_notes
+from .services.contextual_hints_service import generate_hint
+from .services.class_intelligence_service import compute_cohort_alerts
+from .services.lesson_plan_service import generate_lesson_plan
+from .services.quiz_generation_service import generate_quiz
 from .db.graph_manager import GraphManager
 from .db.user_store import UserStore
 from .auth.jwt_handler import create_access_token, verify_token, get_user_from_token
@@ -36,7 +42,9 @@ from .models.schema import (
     QueryRequest, QueryResponse, ChatRequest, ChatResponse,
     ConceptCreate, ConceptResponse,
     EnrollmentRequest, EnrollmentResponse,
-    InteractionRequest, InteractionResponse
+    InteractionRequest, InteractionResponse,
+    StudyPlanResponse, HintRequest, HintResponse,
+    QuizGenerationRequest
 )
 from .agents import OmniProfGraph, AgentState
 from .agents.summarisation_agent import process_old_interactions_background
@@ -67,9 +75,12 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         user_data = get_user_from_token(token)
         return user_data
     except pyjwt.InvalidTokenError as e:
+        detail = str(e)
+        if not detail.lower().startswith("invalid token"):
+            detail = f"Invalid token: {detail}"
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}",
+            detail=detail,
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -272,6 +283,14 @@ def _build_student_progress(student_id: str, course_id: Optional[str]) -> Dict[s
     if not recommended_trajectory and mastery_bands:
         recommended_trajectory.append("Continue guided practice to maintain mastery momentum")
 
+    notes_count = len(
+        [
+            row for row in _read_json_rows("smart_notes.json")
+            if row.get("student_id") == student_id and (not course_id or row.get("course_id") == course_id)
+        ]
+    )
+    study_plan = asyncio.run(generate_study_plan(student_id, course_id)) if course_id else {"blocks": []}
+
     return {
         "student_id": student_id,
         "course_id": course_id,
@@ -279,6 +298,8 @@ def _build_student_progress(student_id: str, course_id: Optional[str]) -> Dict[s
         "concepts_visited": concepts_visited,
         "mastery": mastery_bands,
         "recommended_trajectory": recommended_trajectory,
+        "study_plan_today": study_plan.get("blocks", []),
+        "notes_count": notes_count,
     }
 
 
@@ -320,6 +341,21 @@ def _write_json_rows(name: str, rows: List[Dict[str, Any]]) -> None:
     path = _json_path(name)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(rows, f, indent=2)
+
+
+_hint_rate_limiter: Dict[str, int] = {}
+
+
+def _read_json_object(name: str) -> Dict[str, Any]:
+    path = _json_path(name)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 def ensure_demo_platform_data() -> None:
@@ -1186,14 +1222,46 @@ def ingest(
         course_owner = course_id or current_user.get("user_id", "system")
         
         # Process file with hierarchical extraction
+        existing_graph_summary = {
+            "concepts": [
+                {
+                    "id": concept.get("id"),
+                    "name": concept.get("name"),
+                    "prerequisites": [edge.get("id") for edge in graph_manager.get_prerequisites(concept.get("id"))],
+                }
+                for concept in graph_manager.get_concept_nodes(course_owner)
+            ]
+        }
+
         result = ingestion_service.ingest(
             file_path=temp_path,
             course_owner=course_owner
         )
-        
+        upload_id = str(uuid.uuid4())
+        if result.get("status") == "success":
+            extracted_nodes = [
+                {
+                    "id": node.get("id") or node.get("name"),
+                    "name": node.get("name"),
+                    "description": node.get("description"),
+                    "level": node.get("level"),
+                    "prerequisites": [],
+                }
+                for node in graph_manager.get_nodes_by_source_doc(file.filename, course_owner=course_owner)
+            ]
+            asyncio.run(
+                generate_lesson_plan(
+                    upload_id=upload_id,
+                    new_nodes=extracted_nodes,
+                    existing_graph_summary=existing_graph_summary,
+                    course_id=course_owner,
+                )
+            )
+
         # Return enriched response with user info
         return {
             **result,
+            "upload_id": upload_id,
             "user_id": current_user.get("user_id"),
             "uploaded_by": current_user.get("username"),
             "filename": file.filename
@@ -1514,6 +1582,8 @@ def get_professor_hitl_queue(
             normalized.append(
                 {
                     **row,
+                    "style_deviation_index": row.get("style_deviation_index", row.get("sdi")),
+                    "evaluator_confidence": row.get("evaluator_confidence"),
                     "integrity": {
                         "sdi": row.get("sdi"),
                         "integrity_score": row.get("integrity_score"),
@@ -1529,6 +1599,119 @@ def get_professor_hitl_queue(
                 }
             )
         return {"status": "success", "count": len(normalized), "items": normalized}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/student/study-plan", response_model=StudyPlanResponse, tags=["Student"])
+def get_student_study_plan(
+    course_id: str,
+    current_user: Dict = Depends(get_current_user),
+):
+    try:
+        if current_user.get("role") not in ["student", "professor", "admin"]:
+            raise HTTPException(status_code=403, detail="Student access required")
+        return asyncio.run(generate_study_plan(current_user.get("user_id", ""), course_id))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/student/notes", tags=["Student"])
+def get_student_notes(
+    course_id: str,
+    limit: int = 20,
+    current_user: Dict = Depends(get_current_user),
+):
+    try:
+        if current_user.get("role") not in ["student", "professor", "admin"]:
+            raise HTTPException(status_code=403, detail="Student access required")
+        rows = [
+            row for row in _read_json_rows("smart_notes.json")
+            if row.get("student_id") == current_user.get("user_id") and row.get("course_id") == course_id
+        ]
+        rows.sort(key=lambda row: str(row.get("created_at", "")), reverse=True)
+        return rows[:limit]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/hints", response_model=HintResponse, tags=["Student"])
+def post_hint(
+    request: HintRequest,
+    current_user: Dict = Depends(get_current_user),
+):
+    try:
+        if current_user.get("role") not in ["student", "professor", "admin"]:
+            raise HTTPException(status_code=403, detail="Student access required")
+        assignment_key = request.assignment_id or f"{request.course_id}:{request.question_text.strip().lower()}"
+        rate_key = f"{current_user.get('user_id')}::{assignment_key}"
+        _hint_rate_limiter[rate_key] = _hint_rate_limiter.get(rate_key, 0) + 1
+        max_hints = int(float(os.getenv("HINTS_PER_ASSIGNMENT_MAX", "5")))
+        if _hint_rate_limiter[rate_key] > max_hints:
+            raise HTTPException(status_code=429, detail="Hint limit reached for this assignment")
+        return asyncio.run(
+            generate_hint(
+                current_user.get("user_id", ""),
+                request.question_text,
+                request.draft_answer,
+                request.concept_ids,
+            )
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/cohort-alerts", tags=["Professor"])
+def get_professor_cohort_alerts(
+    course_id: str,
+    current_user: Dict = Depends(get_professor_user),
+):
+    try:
+        cache = _read_json_object("cohort_alerts.json")
+        cache_key = f"{course_id}_{datetime.now(timezone.utc).date().isoformat()}"
+        cached = cache.get(cache_key, {})
+        items = cached.get("items")
+        if isinstance(items, list):
+            return items
+        return asyncio.run(compute_cohort_alerts(course_id))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/professor/lesson-plan/{upload_id}", tags=["Professor"])
+def get_professor_lesson_plan(
+    upload_id: str,
+    current_user: Dict = Depends(get_professor_user),
+):
+    try:
+        rows = _read_json_object("lesson_plans.json")
+        payload = rows.get(upload_id)
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=404, detail="Lesson plan not found")
+        return payload
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/professor/generate-quiz", tags=["Professor"])
+def post_professor_generate_quiz(
+    request: QuizGenerationRequest,
+    current_user: Dict = Depends(get_professor_user),
+):
+    try:
+        return asyncio.run(generate_quiz(request.concept_ids, request.difficulty, request.count, request.course_id))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

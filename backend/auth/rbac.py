@@ -1,6 +1,6 @@
 """
 OmniProf v3.0 — Role-Based Access Control (RBAC)
-Query-time access control at Neo4j query level
+Query-time access control for graph data
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -27,7 +27,7 @@ class NodeVisibility(str, Enum):
 class UserContext:
     """
     Encapsulates authenticated user information for RBAC checks
-    Passed through graph queries to enforce visibility at Neo4j level
+    Passed through graph queries to enforce visibility rules
     """
     
     def __init__(
@@ -77,7 +77,7 @@ class UserContext:
 
 class RBACFilter:
     """
-    Builds Neo4j WHERE clause filters based on visibility and user context
+    Builds graph query filters based on visibility and user context
     Enforces access control at query time, not application time
     """
     
@@ -90,7 +90,7 @@ class RBACFilter:
         Build WHERE clause fragment for node visibility
         
         Args:
-            node_var: Neo4j node variable name (e.g., "n", "c", "t", "m")
+            node_var: node variable name (e.g., "n", "c", "t", "m")
             user_context: UserContext object
         
         Returns:

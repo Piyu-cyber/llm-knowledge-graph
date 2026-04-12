@@ -1,6 +1,6 @@
 """
 OmniProf Memory Service
-Dual-store memory system: Episodic (FAISS) + Semantic (Neo4j)
+Dual-store memory system: Episodic (FAISS) + Semantic graph storage
 
 Episodic Memory: Vector embeddings of chat interactions with temporal decay
 Semantic Memory: Extracted facts and concepts linked to student overlays
@@ -101,7 +101,7 @@ class MemoryService:
     - Top-k retrieval with weighted scoring
     
     Semantic Memory:
-    - Stores learned facts in Neo4j SemanticNode
+    - Stores learned facts in semantic graph nodes
     - Linked to student overlays and concepts
     - Retrieved alongside graph RAG context
     """
@@ -451,41 +451,23 @@ class MemoryService:
             if not concept_ids:
                 return []
 
-            if not hasattr(self.graph_manager, "db"):
-                rows: List[Dict[str, Any]] = []
-                for concept_id in concept_ids:
-                    if hasattr(self.graph_manager, "get_semantic_nodes"):
-                        for item in self.graph_manager.get_semantic_nodes(student_id, concept_id):
-                            rows.append(
-                                {
-                                    "id": item.get("id"),
-                                    "fact": item.get("fact"),
-                                    "confidence": item.get("confidence", 0.0),
-                                    "concept_id": concept_id,
-                                    "created_at": item.get("created_at"),
-                                }
-                            )
-                rows.sort(key=lambda x: float(x.get("confidence", 0.0)), reverse=True)
-                return rows
-            
-            # Query Neo4j for SemanticNode linked to concepts
-            query = (
-                "MATCH (student:User {id: $student_id}) "
-                "MATCH (student)-[:LEARNED_FROM]->(sem:SemanticNode) "
-                "UNWIND $concept_ids as concept_id "
-                "MATCH (concept:CONCEPT {id: concept_id}) "
-                "WHERE (sem)-[:EXTRACTED_FROM]->(concept) "
-                "RETURN sem.id as id, sem.fact as fact, sem.confidence as confidence, "
-                "       concept.id as concept_id, sem.created_at as created_at "
-                "ORDER BY sem.confidence DESC"
-            )
-            
-            result = self.graph_manager.db.run_query(
-                query,
-                {"student_id": student_id, "concept_ids": concept_ids}
-            )
-            
-            return result if result else []
+            if not hasattr(self.graph_manager, "get_semantic_nodes"):
+                return []
+
+            rows: List[Dict[str, Any]] = []
+            for concept_id in concept_ids:
+                for item in self.graph_manager.get_semantic_nodes(student_id, concept_id):
+                    rows.append(
+                        {
+                            "id": item.get("id"),
+                            "fact": item.get("fact"),
+                            "confidence": item.get("confidence", 0.0),
+                            "concept_id": concept_id,
+                            "created_at": item.get("created_at"),
+                        }
+                    )
+            rows.sort(key=lambda x: float(x.get("confidence", 0.0)), reverse=True)
+            return rows
         
         except Exception as e:
             logger.warning(f"Semantic retrieval error: {str(e)}")
@@ -514,33 +496,14 @@ class MemoryService:
             if not concept_ids:
                 return []
 
-            if not hasattr(self.graph_manager, "db"):
-                rows: List[Dict[str, Any]] = []
-                for concept_id in concept_ids:
-                    if hasattr(self.graph_manager, "get_memory_anchors"):
-                        rows.extend(self.graph_manager.get_memory_anchors(student_id, concept_id))
-                rows.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
-                return rows[:5]
-            
-            # Query Neo4j for MemoryAnchor linked to concepts
-            query = (
-                "MATCH (student:User {id: $student_id}) "
-                "MATCH (student)-[:HAS_MEMORY]->(mem:MemoryAnchor) "
-                "UNWIND $concept_ids as concept_id "
-                "MATCH (concept:CONCEPT {id: concept_id}) "
-                "WHERE (mem)-[:DISCUSSED]->(concept) "
-                "RETURN mem.id as id, mem.session_date as session_date, "
-                "       mem.summary_text as summary, mem.created_at as created_at "
-                "ORDER BY mem.created_at DESC "
-                "LIMIT 5"
-            )
-            
-            result = self.graph_manager.db.run_query(
-                query,
-                {"student_id": student_id, "concept_ids": concept_ids}
-            )
-            
-            return result if result else []
+            if not hasattr(self.graph_manager, "get_memory_anchors"):
+                return []
+
+            rows: List[Dict[str, Any]] = []
+            for concept_id in concept_ids:
+                rows.extend(self.graph_manager.get_memory_anchors(student_id, concept_id))
+            rows.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
+            return rows[:5]
         
         except Exception as e:
             logger.warning(f"Memory anchor retrieval error: {str(e)}")

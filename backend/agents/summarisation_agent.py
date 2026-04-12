@@ -12,6 +12,7 @@ Features:
 
 import logging
 import os
+import asyncio
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from .state import AgentState
 from ..db.graph_manager import GraphManager
 from ..db.graph_schema import SemanticNode
 from ..services.llm_service import LLMService
+from ..services.smart_notes_service import generate_session_notes
 
 logger = logging.getLogger(__name__)
 
@@ -620,6 +622,13 @@ class SummarisationAgent:
                 session_id=session_id,
                 summary_text=summary,
                 concept_ids=concept_ids,
+            )
+            asyncio.create_task(
+                generate_session_notes(
+                    student_id=student_id,
+                    session_id=session_id,
+                    messages=messages,
+                )
             )
 
             return {

@@ -71,18 +71,18 @@ class IntegrityAgent:
     5. Update DefenceRecord with integrity_score
     """
     
-    def __init__(self, neo4j_uri: Optional[str] = None,
-                 neo4j_user: Optional[str] = None,
-                 neo4j_password: Optional[str] = None,
+    def __init__(self, graph_uri: Optional[str] = None,
+                 graph_user: Optional[str] = None,
+                 graph_password: Optional[str] = None,
                  min_token_threshold: Optional[int] = None,
                  **kwargs):
         """
         Initialize Integrity Agent.
         
         Args:
-            neo4j_uri: Graph storage URI (unused with RustWorkX local backend)
-            neo4j_user: Graph backend username (unused with RustWorkX local backend)
-            neo4j_password: Graph backend password (unused with RustWorkX local backend)
+            graph_uri: Graph storage URI (unused with RustWorkX local backend)
+            graph_user: Graph backend username (unused with RustWorkX local backend)
+            graph_password: Graph backend password (unused with RustWorkX local backend)
         """
         from dotenv import load_dotenv
         
@@ -205,6 +205,7 @@ class IntegrityAgent:
                             "transcript": record.get("transcript", []),
                             "ai_recommended_grade": record.get("ai_recommended_grade", state.metadata.get("ai_recommended_grade", 0.0)),
                             "integrity_score": integrity_score,
+                            "style_deviation_index": sdi,
                             "sdi": sdi,
                             "sdi_visible": has_sufficient_history,
                             "integrity_visibility": ("professor_only" if not has_sufficient_history else "standard"),
@@ -537,6 +538,7 @@ class IntegrityAgent:
                     "status": status,
                     "integrity_score": integrity_score,
                     "anomalous_input": anomalous_input,
+                    "style_deviation_index": sdi,
                     "sdi": sdi,
                     "sdi_visible": sdi_visible,
                     "integrity_visibility": integrity_visibility,

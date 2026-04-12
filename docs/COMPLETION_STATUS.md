@@ -11,17 +11,21 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 ## Phase Completion Timeline
 
 ### Phase 0: Test Harness Stabilization ✅
+
 **Status**: Complete  
 **Completed**: Early development  
 **Deliverables**:
+
 - pytest infrastructure and fixtures
 - conftest.py with shared test utilities
 - Smoke tests for app startup
 - Gate Passing: ✅
 
 ### Phase 1: Authentication & RBAC ✅
+
 **Status**: Complete  
 **Deliverables**:
+
 - JWT token-based authentication
 - Role-based access control (student/professor/admin)
 - Secure endpoint protection
@@ -29,8 +33,10 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 - Gate Passing: ✅
 
 ### Phase 2: Knowledge Graph Foundation ✅
+
 **Status**: Complete  
 **Deliverables**:
+
 - RustWorkX-based local knowledge graph persistence
 - Graph schema: Module → Topic → Concept → Fact hierarchy
 - Relationship types: REQUIRES, EXTENDS, CONTRASTS, RELATED
@@ -39,8 +45,10 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 - Gate Passing: ✅
 
 ### Phase 3: Content Ingestion ✅
+
 **Status**: Complete  
 **Deliverables**:
+
 - Multi-format document ingestion (PDF, DOCX, PPTX, TXT)
 - LLM-based hierarchical knowledge extraction
 - Intelligent graph insertion with validation
@@ -50,16 +58,19 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 - Gate Passing: ✅
 
 ### Phase 4: Multi-Agent Orchestration ⭐ (Core Feature)
+
 **Status**: Complete  
 **Completed**: Latest phase  
 **Deliverables**:
 
 #### Agent Framework
+
 - `AgentState` - Conversation tracking, user metadata, graph references
 - `EvalState` - Evaluation-specific state tracking
 - `GraphContext` - Domain knowledge retrieval
 
 #### Intent Classification
+
 - `IntentClassifier` - 4-category routing (academic_query, submission_defence, curriculum_change, progress_check)
 - Groq LLM integration (llama-3.3-70b-versatile)
 - Confidence scoring and fallback
@@ -67,6 +78,7 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 #### Implemented Agents (7 total)
 
 **1. TA Agent (Teaching Assistant)** - 400+ lines
+
 - CRAG pipeline with retrieval + relevance checking
 - LLM-based concept extraction
 - StudentOverlay mastery assessment
@@ -76,6 +88,7 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 - Comprehensive error handling
 
 **2. Evaluator Agent** - 500+ lines
+
 - Multi-turn conversational submission defense
 - Probing for least-confident concepts
 - Turn-based interaction (max 10 turns)
@@ -84,6 +97,7 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 - Integrity score integration
 
 **3. Integrity Agent** - 400+ lines
+
 - Writing fingerprint analysis
 - Feature extraction (sentence length, vocabulary, punctuation)
 - Style Deviation Index (SDI) computation (0-100)
@@ -92,6 +106,7 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 - DefenceRecord annotation
 
 **4. Cognitive Engine Agent** - 350+ lines
+
 - Post-evaluation knowledge state updates
 - Concept extraction from evaluation transcript
 - Response correctness determination
@@ -100,43 +115,49 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 - StudentOverlay persistence
 
 **5. Grader Agent** - CRAG Service Upgrade
+
 - Scalar relevance scoring (0.0-1.0)
 - Intelligent routing: answer (>0.7), clarify (0.5-0.7), disclaimer (<0.5)
 - Context-aware response generation
 - Confidence-based guidance
 
 **6. Curriculum Agent**
+
 - Curriculum pattern adaptation
 - Learning path recommendations
 - Topic sequencing
 
 **7. Gamification Agent**
+
 - Achievement badge system
 - Progress tracking
 - Student motivation mechanics
 
 **8. Summarisation Agent**
+
 - Background async processing
 - Session memory consolidation
 - Episodic memory management
 - Dead-letter queue handling
 
 #### Supporting Infrastructure
+
 - `graph.py` - LangGraph orchestration workflow
 - `state.py` - Comprehensive state definitions
 - `intent_classifier.py` - Intent routing engine
-- Schema updates in `neo4j_schema.py`
+- Schema updates in the graph schema modules
 
 **Gate Passing**: ✅ All tests passing
 
 ### Phase 5: Dashboard MVP ✅
+
 **Status**: Complete  
 **Deliverables**:
+
 - Student Dashboard (frontend/student_dashboard.html)
   - Chat interface mockup
   - Progress tracking visualization
   - Achievement display
-  
 - Professor Dashboard (frontend/professor_dashboard.html)
   - Class management interface
   - Student performance view
@@ -147,16 +168,19 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 **Gate Passing**: ✅
 
 ### Phase 6: Production Hardening ✅
+
 **Status**: Complete  
 **Deliverables**:
 
 **LLM Router Service**
+
 - Cascade strategy for multi-model support
 - Backoff mechanism for failures
 - Model availability monitoring
 - Graceful degradation
 
 **Background Job Queue**
+
 - Celery-compatible task processing
 - Curriculum propagation scheduling
 - Session summarization (async)
@@ -164,12 +188,14 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 - Task persistence and retry logic
 
 **Compliance Service**
+
 - FERPA-compliant operation tracking
 - Audit logging for sensitive operations
 - Data access auditing
 - User privacy protections
 
 **Enhanced Error Handling**
+
 - Comprehensive fallback mechanisms
 - Graceful service degradation
 - Error recovery strategies
@@ -182,59 +208,66 @@ OmniProf is a fully functional AI-driven educational platform that has completed
 
 ### Backend Services (12 Services)
 
-| Service | Purpose | Status | Tests |
-|---------|---------|--------|-------|
-| RAG Service | Vector retrieval from documents | ✅ | Passing |
-| CRAG Service | Fact-checked grading with confidence | ✅ | Passing |
-| LLM Service | Groq API integration + fallback | ✅ | Passing |
-| Graph Service | RustWorkX operations | ✅ | Passing |
-| Ingestion Service | Multi-format document processing | ✅ | Passing |
-| Cognitive Engine | Bayesian Knowledge Tracing | ✅ | Passing |
-| Memory Service | FAISS + semantic memory | ✅ | Passing |
-| LLM Router | Multi-model cascade/backoff | ✅ | Passing |
-| Compliance Service | FERPA audit logging | ✅ | Passing |
-| Background Job Queue | Async task processing | ✅ | Passing |
-| Local Inference | GPU/CPU embedding fallback | ✅ | Passing |
-| Jina Multimodal | Multi-modal content support | ✅ | Passing |
+| Service              | Purpose                              | Status | Tests   |
+| -------------------- | ------------------------------------ | ------ | ------- |
+| RAG Service          | Vector retrieval from documents      | ✅     | Passing |
+| CRAG Service         | Fact-checked grading with confidence | ✅     | Passing |
+| LLM Service          | Groq API integration + fallback      | ✅     | Passing |
+| Graph Service        | RustWorkX operations                 | ✅     | Passing |
+| Ingestion Service    | Multi-format document processing     | ✅     | Passing |
+| Cognitive Engine     | Bayesian Knowledge Tracing           | ✅     | Passing |
+| Memory Service       | FAISS + semantic memory              | ✅     | Passing |
+| LLM Router           | Multi-model cascade/backoff          | ✅     | Passing |
+| Compliance Service   | FERPA audit logging                  | ✅     | Passing |
+| Background Job Queue | Async task processing                | ✅     | Passing |
+| Local Inference      | GPU/CPU embedding fallback           | ✅     | Passing |
+| Jina Multimodal      | Multi-modal content support          | ✅     | Passing |
 
 ### Data Storage & Persistence
 
-| Component | Technology | Status |
-|-----------|----------|--------|
-| Knowledge Graph | RustWorkX (local JSON) | ✅ Operational |
-| Vector Embeddings | FAISS (CPU/GPU) | ✅ Operational |
-| Student Overlays | JSON + In-Memory | ✅ Operational |
-| Defence Records | JSON + In-Memory | ✅ Operational |
-| Session Data | In-Memory + JSON dump | ✅ Operational |
+| Component         | Technology             | Status         |
+| ----------------- | ---------------------- | -------------- |
+| Knowledge Graph   | RustWorkX (local JSON) | ✅ Operational |
+| Vector Embeddings | FAISS (CPU/GPU)        | ✅ Operational |
+| Student Overlays  | JSON + In-Memory       | ✅ Operational |
+| Defence Records   | JSON + In-Memory       | ✅ Operational |
+| Session Data      | In-Memory + JSON dump  | ✅ Operational |
 
 ### API Endpoints (20+)
 
 **Authentication (3 endpoints)**
+
 - POST /auth/register
 - POST /auth/login
 - GET /auth/user-info
 
 **Chat & Tutoring (2 endpoints)**
+
 - POST /chat (multi-turn with orchestration)
 - POST /query (single-turn)
 
 **Content Management (3 endpoints)**
+
 - POST /ingest (document upload)
 - GET /curriculum
 - GET /student-overlay/{user_id}
 
 **Evaluation & Integrity (2 endpoints)**
+
 - POST /evaluate
 - GET /integrity-report
 
 **Dashboards (2 endpoints)**
+
 - GET /dashboard/student
 - GET /dashboard/professor
 
 **Enrollment (1 endpoint)**
+
 - POST /enrol
 
 **Monitoring & Admin (3+ endpoints)**
+
 - GET /health
 - GET /docs (OpenAPI)
 - GET /redoc
@@ -247,21 +280,21 @@ All endpoints fully implemented and tested.
 
 ### Phase-Gated Tests (All Passing ✅)
 
-| Phase | Module | Tests | Status |
-|-------|--------|-------|--------|
-| 0 | test_phase0_ingestion | 5 | ✅ Passing |
-| 1 | test_phase1_acceptance | 4 | ✅ Passing |
-| 1 | test_phase1_auth | 6 | ✅ Passing |
-| 2 | test_phase2_acceptance | 4 | ✅ Passing |
-| 2 | test_phase2_graph | 8 | ✅ Passing |
-| 3 | test_phase3_acceptance | 5 | ✅ Passing |
-| 3 | test_phase3_rbac | 4 | ✅ Passing |
-| 4 | test_phase4_acceptance | 6 | ✅ Passing |
-| 4 | test_phase4_agents | 12 | ✅ Passing |
-| 5 | test_phase5_acceptance | 4 | ✅ Passing |
-| 5 | test_phase5_cognitive | 7 | ✅ Passing |
-| 6 | test_phase6_acceptance | 5 | ✅ Passing |
-| 6 | test_phase6_contracts | 8 | ✅ Passing |
+| Phase | Module                 | Tests | Status     |
+| ----- | ---------------------- | ----- | ---------- |
+| 0     | test_phase0_ingestion  | 5     | ✅ Passing |
+| 1     | test_phase1_acceptance | 4     | ✅ Passing |
+| 1     | test_phase1_auth       | 6     | ✅ Passing |
+| 2     | test_phase2_acceptance | 4     | ✅ Passing |
+| 2     | test_phase2_graph      | 8     | ✅ Passing |
+| 3     | test_phase3_acceptance | 5     | ✅ Passing |
+| 3     | test_phase3_rbac       | 4     | ✅ Passing |
+| 4     | test_phase4_acceptance | 6     | ✅ Passing |
+| 4     | test_phase4_agents     | 12    | ✅ Passing |
+| 5     | test_phase5_acceptance | 4     | ✅ Passing |
+| 5     | test_phase5_cognitive  | 7     | ✅ Passing |
+| 6     | test_phase6_acceptance | 5     | ✅ Passing |
+| 6     | test_phase6_contracts  | 8     | ✅ Passing |
 
 **Total Tests**: 95  
 **Passing**: 100% ✅  
@@ -271,14 +304,14 @@ All endpoints fully implemented and tested.
 
 ## Documentation Delivered
 
-| Document | Purpose | Status |
-|----------|---------|--------|
-| README.md | This file - Setup and overview | ✅ Complete |
-| PROJECT_AUDIT_AND_RUNBOOK.md | Operational runbook + full API verification | ✅ Complete |
-| PHASE_WISE_TESTING_PLAN.md | Phase gates and testing matrix | ✅ Complete |
-| PROJECT_BRUTAL_FULLSTACK_ASSESSMENT.md | Complete system assessment | ✅ Complete |
-| RUN_COMMANDS.md | Quick startup commands | ✅ Complete |
-| Code Comments | Comprehensive docstrings in all modules | ✅ Complete |
+| Document                               | Purpose                                     | Status      |
+| -------------------------------------- | ------------------------------------------- | ----------- |
+| README.md                              | This file - Setup and overview              | ✅ Complete |
+| PROJECT_AUDIT_AND_RUNBOOK.md           | Operational runbook + full API verification | ✅ Complete |
+| PHASE_WISE_TESTING_PLAN.md             | Phase gates and testing matrix              | ✅ Complete |
+| PROJECT_BRUTAL_FULLSTACK_ASSESSMENT.md | Complete system assessment                  | ✅ Complete |
+| RUN_COMMANDS.md                        | Quick startup commands                      | ✅ Complete |
+| Code Comments                          | Comprehensive docstrings in all modules     | ✅ Complete |
 
 ---
 
@@ -373,6 +406,7 @@ See README.md for detailed setup and RUN_COMMANDS.md for more examples.
 ## Technical Stack
 
 **Backend**:
+
 - FastAPI (web framework)
 - LangGraph (agent orchestration)
 - RustWorkX (knowledge graph)
@@ -382,17 +416,20 @@ See README.md for detailed setup and RUN_COMMANDS.md for more examples.
 - Pydantic (data validation)
 
 **Frontend** (To Be Implemented):
+
 - React or Vue.js recommended
 - Tailwind CSS for styling
 - WebSocket for real-time chat
 - Chart.js or D3.js for analytics
 
 **Testing**:
+
 - pytest (test runner)
 - pytest-cov (coverage)
 - httpx (HTTP client)
 
 **Deployment**:
+
 - Docker & Docker Compose
 - Optional: Kubernetes, cloud platforms
 
@@ -417,11 +454,13 @@ See README.md for detailed setup and RUN_COMMANDS.md for more examples.
 ## Maintenance & Support
 
 For operational details and command reference:
+
 - See `PROJECT_AUDIT_AND_RUNBOOK.md` for full command matrix
 - See `PHASE_WISE_TESTING_PLAN.md` for test execution
 - See `RUN_COMMANDS.md` for quick startup
 
 For API documentation:
+
 - Live at: http://localhost:8000/docs (Swagger UI)
 - ReDoc at: http://localhost:8000/redoc
 
